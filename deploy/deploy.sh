@@ -34,6 +34,7 @@ STEP="авторизация в Yandex Cloud"
 printf '%s' "$YC_SA_JSON_CREDENTIALS" > "$KEY_FILE"
 yc config set service-account-key "$KEY_FILE"
 yc config set folder-id "$YC_FOLDER_ID"
+yc config set endpoint api.cloud.yandex.net:443
 
 STEP="Сервисный аккаунт для работы приложения"; echo "== Сервисный аккаунт для работы приложения"
 SA_ID="$(yc iam service-account get --name "$SA_NAME" --format json 2>/dev/null | jq -r '.id // empty' || true)"
