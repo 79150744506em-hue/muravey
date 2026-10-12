@@ -4,6 +4,17 @@
 # Скрипт идемпотентный: при первом запуске создаёт ресурсы, потом только обновляет.
 set -euo pipefail
 
+# Повтор команды для нестабильных ответов API (Unavailable, DeadlineExceeded).
+retry() {
+  local n
+  for n in 1 2 3 4; do
+    if "$@"; then return 0; fi
+    echo "попытка $n не удалась, жду $((n * 15)) с" >&2
+    sleep $((n * 15))
+  done
+  "$@"
+}
+
 # Ошибки пишем в аннотации GitHub Actions, чтобы их было видно в сводке запуска.
 ERR_LOG="$(mktemp)"
 exec 2> >(tee -a "$ERR_LOG" >&2)
@@ -61,12 +72,13 @@ curl -fsS -X PUT \
   "https://storage.yandexcloud.net/$BUCKET/index.html"
 
 STEP="Функция $FN_NAME"; echo "== Функция $FN_NAME"
+echo "::notice title=Диагностика::$(curl -s -o /dev/null -w 'serverless-functions.api %{http_code} за %{time_total}с' --max-time 20 https://serverless-functions.api.cloud.yandex.net/ || echo 'serverless-functions.api недоступен')"
 if ! yc serverless function get --name "$FN_NAME" >/dev/null 2>&1; then
-  yc serverless function create --name "$FN_NAME" >/dev/null
+  retry yc serverless function create --name "$FN_NAME" >/dev/null
 fi
 PASSWORD_B64="$(printf '%s' "$MURAVEY_PASSWORD" | base64 -w0)"
 echo "::add-mask::$PASSWORD_B64"
-yc serverless function version create \
+retry yc serverless function version create \
   --function-name "$FN_NAME" \
   --runtime "$RUNTIME" \
   --entrypoint index.handler \
