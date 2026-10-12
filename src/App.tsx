@@ -337,6 +337,8 @@ export function App() {
         done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
     };
     const shown = lists[view];
+    // на сегодня пусто (и фильтр ничего не прячет) — показываем большой экран «Спланировать день»
+    const emptyDay = view === 'today' && tasks !== null && lists.today.length === 0 && !filtering;
     const tagMap = new Map(tags.map((t) => [t.id, t]));
     const sortedTags = [...tags].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     const cardId = openId ?? draft?.id ?? null;
@@ -446,14 +448,14 @@ export function App() {
                         </NewTaskButton>
                     </>
                 )}
-                {view === 'today' && (
+                {view === 'today' && !emptyDay && (
                     <div className="mv-plan-bar">
                         <Text variant="body-1" color="secondary">
                             План на {fmtDate.format(new Date())}. Невыполненное завтра вернётся в бэклог.
                         </Text>
                         <Button view="action" size="m" onClick={() => switchView('backlog')} disabled={!backend}>
-                            <Icon data={Tray} size={16} />
-                            Спланировать день
+                            <Icon data={Plus} size={16} />
+                            Добавить задачи
                         </Button>
                     </div>
                 )}
@@ -470,6 +472,12 @@ export function App() {
                         <Loader size="m" />
                         <Text color="secondary">Загружаю задачи…</Text>
                     </div>
+                ) : emptyDay ? (
+                    <PlanHero
+                        hasBacklog={lists.backlog.length > 0}
+                        disabled={!backend}
+                        onPlan={() => switchView('backlog')}
+                    />
                 ) : shown.length === 0 ? (
                     filtering ? (
                         <div className="mv-empty">
@@ -768,6 +776,53 @@ function TagFilter({tags, value, onChange}: {tags: Tag[]; value: string[]; onCha
                     </button>
                 );
             })}
+        </div>
+    );
+}
+
+function PlanHero({hasBacklog, disabled, onPlan}: {hasBacklog: boolean; disabled: boolean; onPlan: () => void}) {
+    // муравей бросает кофе и убегает к бэклогу, потом переключаем вкладку
+    const [leaving, setLeaving] = React.useState(false);
+    const go = () => {
+        if (leaving) return;
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return onPlan();
+        setLeaving(true);
+        window.setTimeout(onPlan, 1100);
+    };
+    return (
+        <div className={`mv-hero${leaving ? ' mv-hero_leaving' : ''}`}>
+            <div className="mv-hero__scene" aria-hidden="true">
+                <img src={logo} alt="" className="mv-hero__ant" />
+                {/* утренний кофе: планируют обычно с утра */}
+                <svg className="mv-hero__coffee" viewBox="0 0 64 64">
+                    <g className="mv-steam">
+                        <path d="M24 20c-4-5 4-8 0-14" />
+                        <path d="M32 20c-4-5 4-8 0-14" />
+                        <path d="M40 20c-4-5 4-8 0-14" />
+                    </g>
+                    <path className="mv-mug__handle" d="M47 31h4a7 7 0 0 1 0 14h-5" />
+                    <path className="mv-mug__body" d="M15 26h33v17a12 12 0 0 1-12 12h-9a12 12 0 0 1-12-12z" />
+                    <ellipse className="mv-mug__coffee" cx="31.5" cy="27" rx="15" ry="3" />
+                    <path className="mv-mug__band" d="M15 36h33v4H15z" />
+                </svg>
+            </div>
+            <Text variant="header-1" as="h2" className="mv-hero__title">
+                Сегодня — чистый лист
+            </Text>
+            <Text color="secondary" className="mv-hero__text">
+                {hasBacklog
+                    ? 'Выберите в бэклоге, за что взяться сегодня. Остальное подождёт.'
+                    : 'Бэклог пока пуст: добавьте туда задачи и перетащите нужные в «Сегодня».'}
+            </Text>
+            <button
+                type="button"
+                className="mv-cta"
+                disabled={disabled}
+                onClick={go}
+            >
+                <Icon data={Sun} size={20} />
+                Спланировать день
+            </button>
         </div>
     );
 }

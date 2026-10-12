@@ -740,3 +740,244 @@ body {
 .mv-filter__chip .g-label {
     cursor: pointer;
 }
+
+/* ---------- пустой день: большая кнопка ---------- */
+.mv-hero {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: var(--g-spacing-3);
+    padding: var(--g-spacing-8) var(--g-spacing-4) var(--g-spacing-10);
+    border-radius: var(--g-border-radius-xl, 16px);
+    background:
+        radial-gradient(120% 90% at 50% 0%, rgba(255, 112, 67, 0.16), transparent 60%),
+        radial-gradient(80% 60% at 50% 100%, rgba(255, 193, 7, 0.1), transparent 70%);
+}
+.mv-hero__scene {
+    position: relative;
+    width: 136px;
+    height: 104px;
+    animation: mv-bob 3.2s ease-in-out infinite;
+}
+.mv-hero__coffee {
+    position: absolute;
+    left: 70px;
+    top: 22px;
+    width: 60px;
+    height: 60px;
+    transform: rotate(-14deg);
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+}
+.mv-mug__body {
+    fill: #fff3e6;
+    stroke: #8d5a3b;
+    stroke-width: 2;
+}
+.mv-mug__handle {
+    fill: none;
+    stroke: #8d5a3b;
+    stroke-width: 3;
+    stroke-linecap: round;
+}
+.mv-mug__coffee {
+    fill: #6b3e26;
+}
+.mv-mug__band {
+    fill: #ff6a3d;
+}
+.mv-steam path {
+    fill: none;
+    stroke: var(--g-color-text-hint);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    opacity: 0;
+    animation: mv-steam 2.4s ease-in-out infinite;
+}
+.mv-steam path:nth-child(2) {
+    animation-delay: 0.6s;
+}
+.mv-steam path:nth-child(3) {
+    animation-delay: 1.2s;
+}
+@keyframes mv-steam {
+    0% {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    40% {
+        opacity: 0.9;
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+}
+.mv-hero__ant {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 96px;
+    height: 96px;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 18px rgba(255, 87, 34, 0.35));
+}
+.g-root_theme_dark .mv-hero__ant {
+    filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 8px 18px rgba(255, 87, 34, 0.35));
+}
+.mv-hero__title {
+    margin: var(--g-spacing-2) 0 0;
+}
+.mv-hero__text {
+    max-width: 420px;
+}
+.mv-cta {
+    position: relative;
+    overflow: hidden;
+    margin-top: var(--g-spacing-4);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 34px;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 18px;
+    font-weight: 600;
+    color: #2b1400;
+    background: linear-gradient(135deg, #ffb300 0%, #ff8a3d 45%, #ff5a36 100%);
+    background-size: 160% 160%;
+    box-shadow:
+        0 10px 30px -8px rgba(255, 98, 54, 0.75),
+        inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    cursor: pointer;
+    transition:
+        transform 0.18s cubic-bezier(0.2, 1.6, 0.4, 1),
+        box-shadow 0.18s,
+        background-position 0.4s;
+    animation: mv-glow 2.6s ease-in-out infinite;
+}
+.mv-cta::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.55) 50%, transparent 70%);
+    transform: translateX(-120%);
+    animation: mv-shine 3.4s ease-in-out infinite;
+}
+.mv-cta:hover:not(:disabled) {
+    transform: translateY(-2px) scale(1.04);
+    background-position: 100% 0;
+    box-shadow:
+        0 16px 40px -8px rgba(255, 98, 54, 0.9),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.mv-cta:active:not(:disabled) {
+    transform: scale(0.97);
+}
+.mv-cta:focus-visible {
+    outline: 3px solid var(--g-color-line-focus);
+    outline-offset: 3px;
+}
+.mv-cta:disabled {
+    opacity: 0.5;
+    cursor: default;
+    animation: none;
+}
+/* «Спланировать день»: кружка летит вверх, муравей убегает вправо — к бэклогу */
+.mv-hero_leaving .mv-hero__scene {
+    animation: none;
+}
+.mv-hero_leaving .mv-hero__coffee {
+    animation: mv-toss 0.75s cubic-bezier(0.3, 0.6, 0.4, 1) forwards;
+}
+.mv-hero_leaving .mv-hero__ant {
+    /* разгон одним плавным движением + лёгкое покачивание лапками поверх */
+    animation:
+        mv-run 1s cubic-bezier(0.45, 0, 0.7, 0.4) 0.1s forwards,
+        mv-wobble 0.22s ease-in-out 0.1s infinite alternate;
+}
+.mv-hero_leaving .mv-cta {
+    animation: none;
+    transform: scale(0.96);
+    opacity: 0.85;
+}
+@keyframes mv-toss {
+    0% {
+        transform: translate(0, 0) rotate(-14deg);
+        opacity: 1;
+    }
+    40% {
+        transform: translate(-10px, -60px) rotate(-160deg);
+        opacity: 1;
+    }
+    100% {
+        transform: translate(-46px, 10px) rotate(-340deg) scale(0.6);
+        opacity: 0;
+    }
+}
+@keyframes mv-run {
+    0% {
+        translate: 0 0;
+        opacity: 1;
+    }
+    80% {
+        opacity: 1;
+    }
+    100% {
+        translate: 520px 0;
+        opacity: 0;
+    }
+}
+@keyframes mv-wobble {
+    from {
+        rotate: -2deg;
+    }
+    to {
+        rotate: 2deg;
+    }
+}
+@keyframes mv-bob {
+    0%,
+    100% {
+        transform: translateY(0) rotate(-2deg);
+    }
+    50% {
+        transform: translateY(-8px) rotate(2deg);
+    }
+}
+@keyframes mv-glow {
+    0%,
+    100% {
+        box-shadow:
+            0 10px 30px -8px rgba(255, 98, 54, 0.75),
+            inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    }
+    50% {
+        box-shadow:
+            0 12px 38px -6px rgba(255, 152, 0, 0.9),
+            inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    }
+}
+@keyframes mv-shine {
+    0%,
+    55% {
+        transform: translateX(-120%);
+    }
+    80%,
+    100% {
+        transform: translateX(120%);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .mv-hero__scene,
+    .mv-steam path,
+    .mv-cta,
+    .mv-cta::after {
+        animation: none;
+    }
+    .mv-steam path {
+        opacity: 0.6;
+    }
+}
