@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "dev": "vite --open",
     "build": "tsc --noEmit && vite build && node postbuild.mjs",
     "typecheck": "tsc --noEmit"
   },

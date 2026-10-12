@@ -9,4 +9,4 @@
 
 Первичная настройка Yandex Cloud и секретов GitHub описана в [docs/yandex-cloud-setup.md](docs/yandex-cloud-setup.md).
 
-Локально: `npm ci && npm run build`, затем открыть `dist/index.html` (задачи хранятся в браузере).
+Локально: `npm ci && npm run dev` — откроется http://localhost:5173, задачи хранятся в этом браузере.
