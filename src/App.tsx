@@ -1,14 +1,16 @@
 import React from 'react';
 import {
+    ActionTooltip,
     Alert,
     Button,
     Dialog,
-    Drawer,
     DropdownMenu,
     Icon,
     Label,
     Loader,
-    Select,
+    Menu,
+    Popup,
+    useToaster,
     Tab,
     TabList,
     Text,
@@ -18,6 +20,7 @@ import {
 import {
     ArrowUturnCcwLeft,
     CircleCheck,
+    Grip,
     Comment as CommentIcon,
     Plus,
     Sun,
@@ -29,12 +32,16 @@ import {
     Xmark,
 } from '@gravity-ui/icons';
 
-import {PlanBoard} from './PlanBoard';
 import type {Backend} from './store';
 import {pickBackend} from './store';
 import {burst} from './confetti';
-import {TAG_THEMES, dayKey, effectiveList, uid} from './types';
+import {TAG_THEMES, dayKey, effectiveList, sortKey, uid} from './types';
 import type {ListKind, Tag, TagTheme, Task} from './types';
+import {BackupMenu} from './Backup';
+import {BacklogBoard} from './BacklogBoard';
+import {DescriptionEditor} from './DescriptionEditor';
+import {SortableList, useSortableRow} from './SortableList';
+import logo from './assets/logo.png';
 
 type View = ListKind | 'done';
 
@@ -56,6 +63,7 @@ const fmtDateTime = new Intl.DateTimeFormat('ru-RU', {
     minute: '2-digit',
 });
 const fmtDate = new Intl.DateTimeFormat('ru-RU', {day: 'numeric', month: 'long'});
+const fmtTime = new Intl.DateTimeFormat('ru-RU', {hour: '2-digit', minute: '2-digit'});
 const fmtToday = new Intl.DateTimeFormat('ru-RU', {weekday: 'long', day: 'numeric', month: 'long'});
 
 function useToday() {
@@ -83,15 +91,46 @@ export function App() {
         return (['today', 'focus', 'backlog', 'done'] as View[]).includes(h as View) ? (h as View) : 'today';
     });
     const [openId, setOpenId] = React.useState<string | null>(null);
-    const [draftList, setDraftList] = React.useState<'backlog' | 'focus' | null>(null);
+    // новая задача: черновик живёт только в окне, в хранилище попадает, как только появится название
+    const [draft, setDraft] = React.useState<Task | null>(null);
+    const draftRef = React.useRef<Task | null>(null);
     const newTitleRef = React.useRef<HTMLTextAreaElement>(null);
     const [tagsOpen, setTagsOpen] = React.useState(false);
-    const [planning, setPlanning] = React.useState(false);
+    const [tagFilter, setTagFilter] = React.useState<string[]>(() => {
+        try {
+            const v = JSON.parse(localStorage.getItem(FILTER_KEY) ?? '[]');
+            return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+        } catch {
+            return [];
+        }
+    });
+    React.useEffect(() => {
+        try {
+            localStorage.setItem(FILTER_KEY, JSON.stringify(tagFilter));
+        } catch {
+            /* без памяти фильтра */
+        }
+    }, [tagFilter]);
+    const [notice, setNotice] = React.useState<string | null>(null);
     const [completing, setCompleting] = React.useState<Set<string>>(new Set());
+    const toaster = useToaster();
+    // действие уже выполнено; в уведомлении можно его отменить
+    const undoable = (title: string, undo: () => void) => {
+        const name = 'undo-' + uid();
+        toaster.add({
+            name,
+            title,
+            theme: 'normal',
+            autoHiding: 7000,
+            actions: [{label: 'Отменить', view: 'outlined', removeAfterClick: true, onClick: undo}],
+        });
+    };
     const today = useToday();
 
     const tasksRef = React.useRef<Task[]>([]);
     tasksRef.current = tasks ?? [];
+    const tagsRef = React.useRef<Tag[]>([]);
+    tagsRef.current = tags;
 
     React.useEffect(() => {
         let unsub = () => {};
@@ -118,35 +157,98 @@ export function App() {
     }, []);
 
     const patch = React.useCallback(
-        (id: string, p: Partial<Task>) => {
+        (id: string, p: Partial<Task>): Promise<void> => {
             const t = tasksRef.current.find((x) => x.id === id);
-            if (t && backend) run(backend.saveTask({...t, ...p}));
+            if (!t || !backend) return Promise.resolve();
+            const pr = backend.saveTask({...t, ...p});
+            run(pr);
+            return pr;
         },
         [backend, run],
     );
 
-    const addTask = (d: Draft) => {
-        if (!backend) return;
+    const openDraft = (list: 'backlog' | 'focus') => {
         const t: Task = {
             id: uid(),
-            title: d.title,
-            description: d.description,
-            list: d.list,
+            title: '',
+            description: '',
+            list,
             plannedFor: null,
             plannedAt: null,
-            tagIds: d.tagIds,
+            tagIds: [],
             comments: [],
             done: false,
             doneAt: null,
             createdAt: new Date().toISOString(),
         };
-        run(backend.saveTask(t));
+        draftRef.current = t;
+        setOpenId(null);
+        setDraft(t);
+    };
+    // правка черновика: пока нет названия, ничего не пишем (null — «ещё не сохраняем»);
+    // одна и та же запись с тем же id, поэтому дублей не будет
+    const patchDraft = (p: Partial<Task>): Promise<void> | null => {
+        const cur = draftRef.current;
+        if (!cur) return null;
+        const d = {...cur, ...p};
+        draftRef.current = d;
+        setDraft((x) => (x && x.id === d.id ? d : x));
+        if (!d.title.trim() || !backend) return null;
+        const pr = backend.saveTask(d);
+        run(pr);
+        return pr;
+    };
+    const closeCard = () => {
+        setOpenId(null);
+        setDraft(null);
     };
 
+    // при переносе в другой список ручной порядок сбрасывается: в «Сегодня» и «Фокус» задача встаёт вниз, в бэклоге — по дате
     const planToday = (id: string) =>
-        patch(id, {list: 'today', plannedFor: today, plannedAt: new Date().toISOString()});
-    const toBacklog = (id: string) => patch(id, {list: 'backlog', plannedFor: null, plannedAt: null});
-    const toFocus = (id: string) => patch(id, {list: 'focus', plannedFor: null, plannedAt: null});
+        patch(id, {list: 'today', plannedFor: today, plannedAt: new Date().toISOString(), order: null});
+    const toBacklog = (id: string) => patch(id, {list: 'backlog', plannedFor: null, plannedAt: null, order: null});
+    const toFocus = (id: string) => patch(id, {list: 'focus', plannedFor: null, plannedAt: null, order: null});
+
+    // задача id встала на своё место в упорядоченном списке moved: новый ключ — середина между соседями
+    const placeIn = (list: ListKind, moved: Task[], id: string, extra: Partial<Task> = {}) => {
+        if (!backend) return;
+        const to = moved.findIndex((x) => x.id === id);
+        const prev = moved[to - 1] ? sortKey(moved[to - 1], list) : null;
+        const next = moved[to + 1] ? sortKey(moved[to + 1], list) : null;
+        const key =
+            prev != null && next != null ? (prev + next) / 2 : prev != null ? prev + 1024 : (next ?? 0) - 1024;
+        if ((prev != null && key <= prev) || (next != null && key >= next)) {
+            // ключи слиплись — перенумеровываем весь список
+            moved.forEach((x, i) =>
+                patch(x.id, {...(x.id === id ? extra : x.list !== list ? listFields(list) : {}), order: i * 1024}),
+            );
+        } else {
+            patch(id, {...extra, order: key});
+        }
+    };
+    const listFields = (list: ListKind): Partial<Task> =>
+        list === 'today'
+            ? {list: 'today', plannedFor: today, plannedAt: new Date().toISOString()}
+            : {list, plannedFor: null, plannedAt: null};
+
+    // перетащили внутри обычного списка
+    const reorder = (list: ListKind, items: Task[], from: number, to: number) => {
+        if (from === to) return;
+        const moved = [...items];
+        const [t] = moved.splice(from, 1);
+        moved.splice(to, 0, t);
+        placeIn(list, moved, t.id, t.list !== list ? listFields(list) : {});
+    };
+
+    // доска «бэклог / сегодня»: задача оказалась в колонке col на позиции index
+    const placeOnBoard = (id: string, col: 'backlog' | 'today', ids: string[]) => {
+        const byId = new Map(tasksRef.current.map((t) => [t.id, t]));
+        const moved = ids.map((x) => byId.get(x)).filter(Boolean) as Task[];
+        const t = byId.get(id);
+        if (!t) return;
+        const sameList = col === 'today' ? t.list === 'today' && t.plannedFor === today : t.list === 'backlog';
+        placeIn(col, moved, id, sameList ? {} : listFields(col));
+    };
 
     const complete = (id: string, from?: HTMLElement | null) => {
         if (from) {
@@ -156,8 +258,10 @@ export function App() {
             burst(window.innerWidth / 2, window.innerHeight / 3);
         }
         setCompleting((s) => new Set(s).add(id));
+        const t = tasksRef.current.find((x) => x.id === id);
         window.setTimeout(() => {
             patch(id, {done: true, doneAt: new Date().toISOString()});
+            if (t) undoable(`Задача «${t.title}» закрыта`, () => patch(id, {done: false, doneAt: null}));
             window.setTimeout(
                 () =>
                     setCompleting((s) => {
@@ -172,20 +276,36 @@ export function App() {
 
     const reopen = (id: string) => patch(id, {done: false, doneAt: null});
 
+    // удаление без подтверждения: сразу убираем, а в уведомлении можно вернуть
     const removeTask = (id: string) => {
         if (!backend) return;
+        const t = tasksRef.current.find((x) => x.id === id);
         if (openId === id) setOpenId(null);
         run(backend.removeTask(id));
+        if (t) undoable(`Задача «${t.title}» удалена`, () => run(backend.saveTask(t)));
     };
 
     const removeTag = (tagId: string) => {
         if (!backend) return;
+        const tag = tagsRef.current.find((x) => x.id === tagId);
+        const used = tasksRef.current.filter((t) => t.tagIds.includes(tagId)).map((t) => t.id);
         for (const t of tasksRef.current) {
             if (t.tagIds.includes(tagId)) {
                 run(backend.saveTask({...t, tagIds: t.tagIds.filter((x) => x !== tagId)}));
             }
         }
         run(backend.removeTag(tagId));
+        if (tag) {
+            undoable(`Тег «${tag.name}» удалён`, () => {
+                run(backend.saveTag(tag));
+                // возвращаем тег задачам, не трогая остальные их правки
+                for (const t of tasksRef.current) {
+                    if (used.includes(t.id) && !t.tagIds.includes(tagId)) {
+                        run(backend.saveTask({...t, tagIds: [...t.tagIds, tagId]}));
+                    }
+                }
+            });
+        }
     };
 
     const switchView = (v: string) => {
@@ -198,27 +318,68 @@ export function App() {
     };
 
     const all = tasks ?? [];
-    const open = all.filter((t) => !t.done);
+    // фильтр по тегам: задача видна, если у неё есть хотя бы один из выбранных тегов
+    const tagIdsAll = new Set(tags.map((t) => t.id));
+    const activeFilter = tagFilter.filter((id) => tagIdsAll.has(id));
+    const filtering = activeFilter.length > 0;
+    // удалённые теги выкидываем из сохранённого фильтра (когда теги уже загрузились)
+    React.useEffect(() => {
+        if (tags.length && activeFilter.length !== tagFilter.length) setTagFilter(activeFilter);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tags]);
+    const matches = (t: Task) => !filtering || t.tagIds.some((id) => activeFilter.includes(id));
+    const open = all.filter((t) => !t.done && matches(t));
     const byList = (l: ListKind) => open.filter((t) => effectiveList(t, today) === l);
     const lists = {
-        today: byList('today').sort((a, b) => (a.plannedAt ?? '').localeCompare(b.plannedAt ?? '')),
-        focus: byList('focus').sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-        backlog: byList('backlog').sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-        done: all.filter((t) => t.done).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
+        today: byList('today').sort((a, b) => sortKey(a, 'today') - sortKey(b, 'today')),
+        focus: byList('focus').sort((a, b) => sortKey(a, 'focus') - sortKey(b, 'focus')),
+        backlog: byList('backlog').sort((a, b) => sortKey(a, 'backlog') - sortKey(b, 'backlog')),
+        done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
     };
     const shown = lists[view];
     const tagMap = new Map(tags.map((t) => [t.id, t]));
     const sortedTags = [...tags].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-    const openTask = all.find((t) => t.id === openId) ?? null;
+    const cardId = openId ?? draft?.id ?? null;
+    const cardStored = all.find((t) => t.id === cardId) ?? null;
+    const cardTask = cardStored ?? (draft && draft.id === cardId ? draft : null);
     const doneToday = all.filter((t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today).length;
+
+    const createTag = (name: string): Tag => {
+        const tag: Tag = {
+            id: uid(),
+            name,
+            theme: TAG_THEMES[tags.length % TAG_THEMES.length],
+            createdAt: new Date().toISOString(),
+        };
+        if (backend) run(backend.saveTag(tag));
+        return tag;
+    };
+
+    const row = (t: Task, sortable = true) => (
+        <TaskRow
+            sortable={sortable}
+            key={t.id}
+            task={t}
+            list={effectiveList(t, today)}
+            tagMap={tagMap}
+            completing={completing.has(t.id)}
+            onOpen={() => setOpenId(t.id)}
+            onComplete={(el) => complete(t.id, el)}
+            onReopen={() => reopen(t.id)}
+            onPlan={() => planToday(t.id)}
+            onBacklog={() => toBacklog(t.id)}
+            onFocus={() => toFocus(t.id)}
+            onDelete={() => removeTask(t.id)}
+        />
+    );
 
     if (login) return <LoginScreen onLogin={login} />;
 
     return (
-        <div className={`mv-app${view === 'today' && planning ? ' mv-app_wide' : ''}`}>
+        <div className={`mv-app${view === 'backlog' ? ' mv-app_wide' : ''}`}>
             <header className="mv-header">
                 <div className="mv-brand">
-                    <AntMark />
+                    <img src={logo} alt="" className="mv-mark" />
                     <div>
                         <Text variant="header-1" as="h1" className="mv-title">
                             Муравей
@@ -229,10 +390,18 @@ export function App() {
                         </Text>
                     </div>
                 </div>
-                <Button view="outlined" size="m" onClick={() => setTagsOpen(true)}>
-                    <Icon data={TagIcon} size={16} />
-                    Теги
-                </Button>
+                <div className="mv-header__actions">
+                    <Button view="outlined" size="m" onClick={() => setTagsOpen(true)}>
+                        <Icon data={TagIcon} size={16} />
+                        Теги
+                    </Button>
+                    <BackupMenu
+                        backend={backend}
+                        tasks={all}
+                        tags={tags}
+                        onResult={(r) => (r.ok ? setNotice(r.message) : setError(r.message))}
+                    />
+                </div>
             </header>
 
             <TabList value={view} onUpdate={switchView} size="l" contentOverflow="scroll" className="mv-tabs">
@@ -250,13 +419,20 @@ export function App() {
                 </Tab>
             </TabList>
 
+            {tags.length > 0 && (
+                <TagFilter tags={sortedTags} value={activeFilter} onChange={setTagFilter} />
+            )}
+
             {error && (
                 <Alert theme="danger" message={error} onClose={() => setError(null)} className="mv-alert" />
+            )}
+            {notice && (
+                <Alert theme="success" message={notice} onClose={() => setNotice(null)} className="mv-alert" />
             )}
 
             <main className="mv-main">
                 {view === 'backlog' && (
-                    <NewTaskButton onClick={() => setDraftList('backlog')} disabled={!backend}>
+                    <NewTaskButton onClick={() => openDraft('backlog')} disabled={!backend}>
                         Новая задача
                     </NewTaskButton>
                 )}
@@ -265,7 +441,7 @@ export function App() {
                         <Text variant="body-1" color="secondary" className="mv-hint">
                             Фокусные задачи висят здесь постоянно, пока вы их не закроете.
                         </Text>
-                        <NewTaskButton onClick={() => setDraftList('focus')} disabled={!backend}>
+                        <NewTaskButton onClick={() => openDraft('focus')} disabled={!backend}>
                             Новая фокусная задача
                         </NewTaskButton>
                     </>
@@ -273,57 +449,43 @@ export function App() {
                 {view === 'today' && (
                     <div className="mv-plan-bar">
                         <Text variant="body-1" color="secondary">
-                            {planning
-                                ? 'Перетащите задачи из бэклога в «Сегодня». Лишнее можно утащить обратно.'
-                                : `План на ${fmtDate.format(new Date())}. Невыполненное завтра вернётся в бэклог.`}
+                            План на {fmtDate.format(new Date())}. Невыполненное завтра вернётся в бэклог.
                         </Text>
-                        {planning ? (
-                            <Button view="action" size="m" onClick={() => setPlanning(false)}>
-                                Готово
-                            </Button>
-                        ) : (
-                            <Button view="action" size="m" onClick={() => setPlanning(true)} disabled={!backend}>
-                                <Icon data={Tray} size={16} />
-                                Спланировать день
-                            </Button>
-                        )}
+                        <Button view="action" size="m" onClick={() => switchView('backlog')} disabled={!backend}>
+                            <Icon data={Tray} size={16} />
+                            Спланировать день
+                        </Button>
                     </div>
                 )}
 
-                {view === 'today' && planning && tasks !== null ? (
-                    <PlanBoard
+                {view === 'backlog' && tasks !== null ? (
+                    <BacklogBoard
                         backlog={lists.backlog}
                         today={lists.today}
-                        tagMap={tagMap}
-                        onPlan={planToday}
-                        onUnplan={toBacklog}
-                    />
-                ) : tasks === null ? (
+                        renderRow={(t) => row(t)}
+                        onPlace={placeOnBoard}
+                        emptyBacklog={filtering ? 'Нет задач с выбранными тегами.' : 'Бэклог пуст.'}
+                    />                ) : tasks === null ? (
                     <div className="mv-loading">
                         <Loader size="m" />
                         <Text color="secondary">Загружаю задачи…</Text>
                     </div>
                 ) : shown.length === 0 ? (
-                    <EmptyState view={view} hasBacklog={lists.backlog.length > 0} />
+                    filtering ? (
+                        <div className="mv-empty">
+                            <Text color="secondary">Нет задач с выбранными тегами.</Text>
+                        </div>
+                    ) : (
+                        <EmptyState view={view} hasBacklog={lists.backlog.length > 0} />
+                    )
                 ) : (
-                    <ul className="mv-list">
-                        {shown.map((t) => (
-                            <TaskRow
-                                key={t.id}
-                                task={t}
-                                list={effectiveList(t, today)}
-                                tagMap={tagMap}
-                                completing={completing.has(t.id)}
-                                onOpen={() => setOpenId(t.id)}
-                                onComplete={(el) => complete(t.id, el)}
-                                onReopen={() => reopen(t.id)}
-                                onPlan={() => planToday(t.id)}
-                                onBacklog={() => toBacklog(t.id)}
-                                onFocus={() => toFocus(t.id)}
-                                onDelete={() => removeTask(t.id)}
-                            />
-                        ))}
-                    </ul>
+                    <SortableList
+                        ids={shown.map((t) => t.id)}
+                        disabled={view === 'done'}
+                        onMove={(from, to) => view !== 'done' && reorder(view, shown, from, to)}
+                    >
+                        {shown.map((t) => row(t, view !== 'done'))}
+                    </SortableList>
                 )}
             </main>
 
@@ -333,66 +495,47 @@ export function App() {
                 </Text>
             )}
 
-            <Drawer
-                open={Boolean(draftList)}
-                onOpenChange={(o) => !o && setDraftList(null)}
-                disableOutsideClick
-                initialFocus={newTitleRef}
-                placement="right"
-                size={Math.min(560, window.innerWidth)}
-                contentOverflow="auto"
-                aria-label="Новая задача"
-            >
-                {draftList && (
-                    <NewTaskDetails
-                        list={draftList}
-                        titleRef={newTitleRef}
-                        tags={sortedTags}
-                        tagMap={tagMap}
-                        onCreate={(d) => {
-                            addTask(d);
-                            setDraftList(null);
-                        }}
-                        onCancel={() => setDraftList(null)}
-                        onManageTags={() => setTagsOpen(true)}
-                    />
-                )}
-            </Drawer>
-
-            <Drawer
-                open={Boolean(openTask)}
-                onOpenChange={(o) => !o && setOpenId(null)}
-                placement="right"
-                size={Math.min(560, window.innerWidth)}
+            <Dialog
+                open={Boolean(cardTask)}
+                onClose={closeCard}
+                initialFocus={cardStored ? undefined : newTitleRef}
+                hasCloseButton={false}
+                maxWidth="m"
+                fullWidth
                 contentOverflow="auto"
                 aria-label="Задача"
             >
-                {openTask && (
+                {cardTask && (
                     <TaskDetails
-                        key={openTask.id}
-                        task={openTask}
-                        list={effectiveList(openTask, today)}
+                        key={cardTask.id}
+                        task={cardTask}
+                        isNew={!cardStored}
+                        titleRef={newTitleRef}
+                        list={effectiveList(cardTask, today)}
                         tags={sortedTags}
                         tagMap={tagMap}
-                        onPatch={(p) => patch(openTask.id, p)}
-                        onClose={() => setOpenId(null)}
+                        onPatch={(p) => (cardStored ? patch(cardTask.id, p) : patchDraft(p))}
+                        onClose={closeCard}
                         onComplete={() => {
-                            const id = openTask.id;
-                            setOpenId(null);
+                            const id = cardTask.id;
+                            closeCard();
                             window.setTimeout(() => {
                                 const el = document.querySelector<HTMLElement>(`[data-check="${id}"]`);
                                 complete(id, el);
                             }, 250);
                         }}
-                        onReopen={() => reopen(openTask.id)}
-                        onPlan={() => planToday(openTask.id)}
-                        onBacklog={() => toBacklog(openTask.id)}
-                        onFocus={() => toFocus(openTask.id)}
-                        onDelete={() => removeTask(openTask.id)}
-                        onManageTags={() => setTagsOpen(true)}
+                        onReopen={() => reopen(cardTask.id)}
+                        onPlan={() => planToday(cardTask.id)}
+                        onBacklog={() => toBacklog(cardTask.id)}
+                        onFocus={() => toFocus(cardTask.id)}
+                        onDelete={() => {
+                            removeTask(cardTask.id);
+                            closeCard();
+                        }}
+                        onCreateTag={createTag}
                     />
                 )}
-            </Drawer>
+            </Dialog>
 
             <TagsDialog
                 open={tagsOpen}
@@ -433,7 +576,7 @@ function LoginScreen({onLogin}: {onLogin: (password: string) => Promise<void>}) 
         <div className="mv-login">
             <form className="mv-login__card" onSubmit={submit}>
                 <div className="mv-brand">
-                    <AntMark />
+                    <img src={logo} alt="" className="mv-mark" />
                     <Text variant="header-1" as="h1" className="mv-title">
                         Муравей
                     </Text>
@@ -457,24 +600,6 @@ function LoginScreen({onLogin}: {onLogin: (password: string) => Promise<void>}) 
     );
 }
 
-function AntMark() {
-    return (
-        <svg className="mv-mark" viewBox="0 0 40 40" aria-hidden="true">
-            <circle cx="12" cy="20" r="5" />
-            <circle cx="21" cy="20" r="4" />
-            <ellipse cx="31" cy="20" rx="6" ry="5" />
-            <path d="M8 16 4 9M9 16l1-8M21 16l-3-6M21 24l-3 6M24 17l4-6M24 23l4 6M31 15l2-6M31 25l2 6" />
-        </svg>
-    );
-}
-
-interface Draft {
-    title: string;
-    description: string;
-    tagIds: string[];
-    list: 'backlog' | 'focus';
-}
-
 function NewTaskButton({onClick, disabled, children}: {onClick: () => void; disabled?: boolean; children: string}) {
     return (
         <div>
@@ -486,148 +611,163 @@ function NewTaskButton({onClick, disabled, children}: {onClick: () => void; disa
     );
 }
 
-function TagSelect({
+function TagInput({
     id,
     tags,
     tagMap,
     value,
     onUpdate,
-    onManageTags,
+    onCreateTag,
+    onSubmit,
 }: {
     id: string;
     tags: Tag[];
     tagMap: Map<string, Tag>;
     value: string[];
     onUpdate: (v: string[]) => void;
-    onManageTags: () => void;
+    onCreateTag: (name: string) => Tag;
+    onSubmit?: () => void;
 }) {
-    if (tags.length === 0) {
-        return (
-            <div className="mv-inline">
-                <Text color="secondary">Тегов пока нет.</Text>
-                <Button view="flat-action" size="s" onClick={onManageTags}>
-                    Создать тег
-                </Button>
-            </div>
-        );
-    }
+    const [text, setText] = React.useState('');
+    const [active, setActive] = React.useState(0);
+    const [focused, setFocused] = React.useState(false);
+    const anchorRef = React.useRef<HTMLDivElement>(null);
+    const q = text.trim().toLowerCase();
+    const current = value.filter((x) => tagMap.has(x));
+    const suggestions = q ? tags.filter((t) => !current.includes(t.id) && t.name.toLowerCase().includes(q)).slice(0, 8) : [];
+    const open = focused && suggestions.length > 0;
+    const activeIdx = Math.min(active, suggestions.length - 1);
+
+    const add = (tagId: string) => {
+        if (!current.includes(tagId)) onUpdate([...current, tagId]);
+        setText('');
+        setActive(0);
+    };
+    // Enter или запятая: подсказка, существующий тег с тем же именем или новый тег
+    const commit = (raw: string) => {
+        const name = raw.trim();
+        if (!name) return setText('');
+        const lower = name.toLowerCase();
+        const same = tags.find((t) => t.name.toLowerCase() === lower);
+        if (same) return add(same.id);
+        if (open && raw === text) return add(suggestions[activeIdx].id);
+        add(onCreateTag(name).id);
+    };
+
     return (
-        <Select
-            id={id}
-            multiple
-            filterable={tags.length > 7}
-            width="max"
-            size="m"
-            placeholder="Без тегов"
-            value={value.filter((x) => tagMap.has(x))}
-            onUpdate={onUpdate}
-            options={tags.map((t) => ({value: t.id, content: t.name, data: t}))}
-            renderOption={(o) => (
-                <Label theme={(o.data as Tag).theme} size="xs">
-                    {(o.data as Tag).name}
-                </Label>
-            )}
-            renderSelectedOption={(o) => (
-                <Label key={o.value} theme={(o.data as Tag).theme} size="xs" className="mv-sel-tag">
-                    {(o.data as Tag).name}
-                </Label>
-            )}
-        />
+        <div className="mv-taginput" ref={anchorRef}>
+            {current.map((tid) => {
+                const t = tagMap.get(tid)!;
+                return (
+                    <Label
+                        key={tid}
+                        theme={t.theme}
+                        size="xs"
+                        type="close"
+                        closeButtonLabel={`Убрать тег ${t.name}`}
+                        onCloseClick={() => onUpdate(current.filter((x) => x !== tid))}
+                    >
+                        {t.name}
+                    </Label>
+                );
+            })}
+            <input
+                id={id}
+                className="mv-taginput__field"
+                value={text}
+                placeholder="Добавить тег"
+                autoComplete="off"
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                onChange={(e) => {
+                    const v = e.target.value;
+                    setActive(0);
+                    if (v.endsWith(',')) commit(v.slice(0, -1));
+                    else setText(v);
+                }}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && onSubmit) {
+                        e.preventDefault();
+                        onSubmit();
+                    } else if (e.key === 'Enter' && !(e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        commit(text);
+                    } else if (e.key === 'ArrowDown' && open) {
+                        e.preventDefault();
+                        setActive((i) => (i + 1) % suggestions.length);
+                    } else if (e.key === 'ArrowUp' && open) {
+                        e.preventDefault();
+                        setActive((i) => (i - 1 + suggestions.length) % suggestions.length);
+                    } else if (e.key === 'Escape' && text) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setText('');
+                    } else if (e.key === 'Backspace' && !text && current.length) {
+                        onUpdate(current.slice(0, -1));
+                    }
+                }}
+            />
+            <Popup
+                open={open}
+                anchorRef={anchorRef}
+                placement="bottom-start"
+                initialFocus={-1}
+                returnFocus={false}
+                disableEscapeKeyDown
+                disableOutsideClick
+            >
+                <Menu size="m" className="mv-taginput__menu">
+                    {suggestions.map((t, i) => (
+                        <Menu.Item
+                            key={t.id}
+                            active={i === activeIdx}
+                            onClick={() => add(t.id)}
+                            extraProps={{onMouseDown: (e: React.MouseEvent) => e.preventDefault()}}
+                        >
+                            <Label theme={t.theme} size="xs">
+                                {t.name}
+                            </Label>
+                        </Menu.Item>
+                    ))}
+                </Menu>
+            </Popup>
+        </div>
     );
 }
 
-function NewTaskDetails({
-    list,
-    titleRef,
-    tags,
-    tagMap,
-    onCreate,
-    onCancel,
-    onManageTags,
-}: {
-    list: 'backlog' | 'focus';
-    titleRef: React.RefObject<HTMLTextAreaElement>;
-    tags: Tag[];
-    tagMap: Map<string, Tag>;
-    onCreate: (d: Draft) => void;
-    onCancel: () => void;
-    onManageTags: () => void;
-}) {
-    const [title, setTitle] = React.useState('');
-    const [description, setDescription] = React.useState('');
-    const [tagIds, setTagIds] = React.useState<string[]>([]);
-    const ready = title.trim().length > 0;
-    const create = () => {
-        if (ready) onCreate({title: title.trim(), description, tagIds, list});
-    };
-    const ctrlEnter = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            create();
-        }
-    };
+const FILTER_KEY = 'muravey:tag-filter';
+
+function TagFilter({tags, value, onChange}: {tags: Tag[]; value: string[]; onChange: (v: string[]) => void}) {
+    const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
     return (
-        <div className="mv-details">
-            <div className="mv-details__head">
-                <Label theme={list === 'focus' ? 'utility' : 'normal'} size="s">
-                    {list === 'focus' ? 'Новая фокусная задача' : 'Новая задача в бэклог'}
+        <div className="mv-filter" role="group" aria-label="Фильтр по тегам">
+            <button
+                type="button"
+                className={`mv-filter__chip${value.length === 0 ? ' mv-filter__chip_on' : ''}`}
+                aria-pressed={value.length === 0}
+                onClick={() => onChange([])}
+            >
+                <Label theme="normal" size="xs">
+                    Все
                 </Label>
-                <Button view="flat" size="m" onClick={onCancel} aria-label="Закрыть панель" className="mv-details__x">
-                    <Icon data={Xmark} size={16} />
-                </Button>
-            </div>
-
-            <TextArea
-                id="mv-new-title"
-                view="clear"
-                size="xl"
-                minRows={1}
-                controlRef={titleRef}
-                className="mv-details__title"
-                value={title}
-                onUpdate={setTitle}
-                onKeyDown={ctrlEnter}
-                placeholder="Название задачи"
-            />
-
-            <section className="mv-field">
-                <Text variant="subheader-1">Теги</Text>
-                <TagSelect
-                    id="mv-new-tags"
-                    tags={tags}
-                    tagMap={tagMap}
-                    value={tagIds}
-                    onUpdate={setTagIds}
-                    onManageTags={onManageTags}
-                />
-            </section>
-
-            <section className="mv-field">
-                <Text variant="subheader-1">Описание</Text>
-                <TextArea
-                    id="mv-new-desc"
-                    size="l"
-                    minRows={5}
-                    value={description}
-                    onUpdate={setDescription}
-                    onKeyDown={ctrlEnter}
-                    placeholder="Подробности, ссылки, критерии готовности"
-                />
-            </section>
-
-            <div className="mv-details__foot">
-                <Button view="action" size="l" onClick={create} disabled={!ready}>
-                    <Icon data={Plus} size={16} />
-                    Создать задачу
-                </Button>
-                <Button view="flat" size="l" onClick={onCancel}>
-                    Отмена
-                </Button>
-                <span className="mv-spacer" />
-                <Text variant="caption-2" color="secondary">
-                    Ctrl+Enter создаёт задачу
-                </Text>
-            </div>
+            </button>
+            {tags.map((t) => {
+                const on = value.includes(t.id);
+                return (
+                    <button
+                        key={t.id}
+                        type="button"
+                        className={`mv-filter__chip${on ? ' mv-filter__chip_on' : ''}`}
+                        aria-pressed={on}
+                        onClick={() => toggle(t.id)}
+                    >
+                        <Label theme={t.theme} size="xs">
+                            {t.name}
+                        </Label>
+                    </button>
+                );
+            })}
         </div>
     );
 }
@@ -709,6 +849,7 @@ function TaskRow({
     tagMap,
     completing,
     onOpen,
+    sortable = false,
     ...a
 }: {
     task: Task;
@@ -716,10 +857,12 @@ function TaskRow({
     tagMap: Map<string, Tag>;
     completing: boolean;
     onOpen: () => void;
+    sortable?: boolean;
 } & RowActions) {
-    const [confirmDelete, setConfirmDelete] = React.useState(false);
+    const drag = useSortableRow(task.id, sortable);
     const menu = [
-        ...(list !== 'today' ? [{text: 'На сегодня', iconStart: <Icon data={Sun} size={16} />, action: a.onPlan}] : []),
+        // в бэклоге для этого есть солнышко прямо на строке
+        ...(list === 'focus' ? [{text: 'На сегодня', iconStart: <Icon data={Sun} size={16} />, action: a.onPlan}] : []),
         ...(list !== 'backlog'
             ? [{text: 'В бэклог', iconStart: <Icon data={Tray} size={16} />, action: a.onBacklog}]
             : []),
@@ -730,14 +873,26 @@ function TaskRow({
             text: 'Удалить',
             theme: 'danger' as const,
             iconStart: <Icon data={TrashBin} size={16} />,
-            action: () => setConfirmDelete(true),
+            action: a.onDelete,
         },
     ];
     return (
         <li
-            className={`mv-row${completing ? ' mv-row_completing' : ''}${task.done ? ' mv-row_done' : ''}`}
-            onClick={onOpen}
+            ref={drag.ref}
+            style={drag.style}
+            {...drag.props}
+            className={`mv-row${completing ? ' mv-row_completing' : ''}${task.done ? ' mv-row_done' : ''}${
+                sortable ? ' mv-row_sortable' : ''
+            }${drag.isDragging ? ' mv-row_dragging' : ''}`}
+            onClick={() => {
+                if (!drag.consumeDrag()) onOpen();
+            }}
         >
+            {sortable && (
+                <span className="mv-row__grip" aria-hidden="true">
+                    <Icon data={Grip} size={14} />
+                </span>
+            )}
             <CheckButton id={task.id} done={task.done} completing={completing} onClick={a.onComplete} />
             <div className="mv-row__main">
                 <span className="mv-row__title">{task.title}</span>
@@ -768,58 +923,80 @@ function TaskRow({
                 ) : (
                     <>
                         {list === 'backlog' && (
-                            <Button view="flat" size="m" onClick={a.onPlan} title="Запланировать на сегодня">
-                                <Icon data={Sun} size={16} />
-                                <span className="mv-hide-narrow">На сегодня</span>
-                            </Button>
+                            <ActionTooltip title="Запланировать на сегодня">
+                                <Button
+                                    view="flat"
+                                    size="m"
+                                    onClick={a.onPlan}
+                                    aria-label="Запланировать на сегодня"
+                                >
+                                    <Icon data={Sun} size={16} />
+                                </Button>
+                            </ActionTooltip>
                         )}
                         <DropdownMenu items={menu} size="m" />
                     </>
                 )}
             </div>
-            <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} size="s">
-                <Dialog.Header caption="Удалить задачу?" />
-                <Dialog.Body>
-                    «{task.title}» удалится вместе с описанием и комментариями. Отменить это нельзя.
-                </Dialog.Body>
-                <Dialog.Footer
-                    textButtonApply="Удалить"
-                    textButtonCancel="Отмена"
-                    propsButtonApply={{view: 'outlined-danger'}}
-                    onClickButtonApply={() => {
-                        setConfirmDelete(false);
-                        a.onDelete();
-                    }}
-                    onClickButtonCancel={() => setConfirmDelete(false)}
-                />
-            </Dialog>
         </li>
     );
 }
 
 function TaskDetails({
     task,
+    isNew = false,
+    titleRef,
     list,
     tags,
     tagMap,
     onPatch,
     onClose,
-    onManageTags,
+    onCreateTag,
     ...a
 }: {
     task: Task;
+    /** ещё не сохранённый черновик новой задачи */
+    isNew?: boolean;
+    titleRef?: React.RefObject<HTMLTextAreaElement>;
     list: ListKind;
     tags: Tag[];
     tagMap: Map<string, Tag>;
-    onPatch: (p: Partial<Task>) => void;
+    /** null — правка принята, но писать пока нечего (у черновика нет названия) */
+    onPatch: (p: Partial<Task>) => Promise<void> | null;
     onClose: () => void;
-    onManageTags: () => void;
+    onCreateTag: (name: string) => Tag;
     onComplete: () => void;
 } & Omit<RowActions, 'onComplete'>) {
     const [title, setTitle] = React.useState(task.title);
-    const [desc, setDesc] = React.useState(task.description);
     const [comment, setComment] = React.useState('');
-    const [confirmDelete, setConfirmDelete] = React.useState(false);
+
+    // правки сохраняются сами; в шапке показываем состояние последней записи
+    type SaveState = {kind: 'idle'} | {kind: 'pending'} | {kind: 'saved'; at: Date} | {kind: 'failed'};
+    const [saveState, setSaveState] = React.useState<SaveState>({kind: 'idle'});
+    const seq = React.useRef(0);
+    const save = React.useCallback(
+        (p: Partial<Task>) => {
+            const n = ++seq.current;
+            const pr = onPatch(p);
+            if (!pr) return setSaveState({kind: 'idle'});
+            setSaveState({kind: 'pending'});
+            pr.then(
+                () => n === seq.current && setSaveState({kind: 'saved', at: new Date()}),
+                () => n === seq.current && setSaveState({kind: 'failed'}),
+            );
+        },
+        [onPatch],
+    );
+    const flushAndClose = () => {
+        flushRef.current();
+        onClose();
+    };
+    const submitKey = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            flushAndClose();
+        }
+    };
 
     // сохраняем текст после паузы и при уходе с поля
     const timer = React.useRef<number>();
@@ -828,9 +1005,10 @@ function TaskDetails({
         window.clearTimeout(timer.current);
         const p = pending.current;
         pending.current = {};
-        if (Object.keys(p).length) onPatch(p);
-    }, [onPatch]);
+        if (Object.keys(p).length) save(p);
+    }, [save]);
     const schedule = (p: Partial<Task>) => {
+        if (task.title.trim() || p.title) setSaveState({kind: 'pending'});
         pending.current = {...pending.current, ...p};
         window.clearTimeout(timer.current);
         timer.current = window.setTimeout(flush, 700);
@@ -843,165 +1021,194 @@ function TaskDetails({
         const text = comment.trim();
         if (!text) return;
         flush();
-        onPatch({comments: [...task.comments, {id: uid(), text, at: new Date().toISOString()}]});
+        save({comments: [...task.comments, {id: uid(), text, at: new Date().toISOString()}]});
         setComment('');
     };
 
     const where = task.done ? 'Выполнена' : LIST_NAMES[list];
 
     return (
-        <div className="mv-details">
+        <div className="mv-details mv-details_popup">
             <div className="mv-details__head">
                 <Label theme={task.done ? 'success' : list === 'focus' ? 'utility' : 'normal'} size="s">
-                    {where}
+                    {isNew ? (list === 'focus' ? 'Новая фокусная задача' : 'Новая задача в бэклог') : where}
                 </Label>
-                <Text variant="caption-2" color="secondary">
-                    создана {fmtDateTime.format(new Date(task.createdAt))}
-                </Text>
-                <Button view="flat" size="m" onClick={onClose} aria-label="Закрыть панель" className="mv-details__x">
+                <SaveStatus state={saveState} createdAt={task.createdAt} isNew={isNew} />
+                <div className="mv-details__actions">
+                    {!isNew && (
+                        <>
+                            {!task.done && list !== 'today' && (
+                                <ActionTooltip title="На сегодня">
+                                    <Button view="flat" size="m" onClick={a.onPlan} aria-label="На сегодня">
+                                        <Icon data={Sun} size={16} />
+                                    </Button>
+                                </ActionTooltip>
+                            )}
+                            {!task.done && list !== 'backlog' && (
+                                <ActionTooltip title="В бэклог">
+                                    <Button view="flat" size="m" onClick={a.onBacklog} aria-label="В бэклог">
+                                        <Icon data={Tray} size={16} />
+                                    </Button>
+                                </ActionTooltip>
+                            )}
+                            {!task.done && list !== 'focus' && (
+                                <ActionTooltip title="Сделать фокусной">
+                                    <Button view="flat" size="m" onClick={a.onFocus} aria-label="Сделать фокусной">
+                                        <Icon data={Target} size={16} />
+                                    </Button>
+                                </ActionTooltip>
+                            )}
+                            <ActionTooltip title="Удалить">
+                                <Button view="flat-danger" size="m" onClick={a.onDelete} aria-label="Удалить задачу">
+                                    <Icon data={TrashBin} size={16} />
+                                </Button>
+                            </ActionTooltip>
+                        </>
+                    )}
+                </div>
+                <Button view="flat" size="m" onClick={flushAndClose} aria-label="Закрыть" className="mv-details__close">
                     <Icon data={Xmark} size={16} />
                 </Button>
             </div>
 
-            <TextArea
-                id="mv-task-title"
-                view="clear"
-                size="xl"
-                minRows={1}
-                className="mv-details__title"
-                value={title}
-                onUpdate={(v) => {
-                    setTitle(v);
-                    if (v.trim()) schedule({title: v.trim()});
-                }}
-                onBlur={() => {
-                    if (!title.trim()) setTitle(task.title);
-                    flush();
-                }}
-                placeholder="Название"
-            />
-
-            <section className="mv-field">
-                <Text variant="subheader-1">Теги</Text>
-                <TagSelect
-                    id="mv-task-tags"
-                    tags={tags}
-                    tagMap={tagMap}
-                    value={task.tagIds}
-                    onUpdate={(v) => onPatch({tagIds: v})}
-                    onManageTags={onManageTags}
+            <div className="mv-details__titlerow">
+                {!isNew && (
+                    <button
+                        type="button"
+                        className={`mv-check${task.done ? ' mv-check_on' : ''}`}
+                        aria-label={task.done ? 'Вернуть в работу' : 'Закрыть задачу'}
+                        title={task.done ? 'Вернуть в работу' : 'Закрыть задачу'}
+                        onClick={() => {
+                            flush();
+                            if (task.done) a.onReopen();
+                            else a.onComplete();
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 12.5l4 4 8-9" />
+                        </svg>
+                    </button>
+                )}
+                <TextArea
+                    id="mv-task-title"
+                    controlRef={titleRef}
+                    onKeyDown={submitKey}
+                    view="clear"
+                    size="xl"
+                    minRows={1}
+                    className="mv-details__title"
+                    value={title}
+                    onUpdate={(v) => {
+                        setTitle(v);
+                        if (v.trim()) schedule({title: v.trim()});
+                    }}
+                    onBlur={() => {
+                        if (!title.trim()) setTitle(task.title);
+                        flush();
+                    }}
+                    placeholder={isNew ? 'Название задачи' : 'Название'}
                 />
-            </section>
+            </div>
 
             <section className="mv-field">
                 <Text variant="subheader-1">Описание</Text>
-                <TextArea
-                    id="mv-task-desc"
-                    size="l"
-                    minRows={3}
-                    value={desc}
-                    onUpdate={(v) => {
-                        setDesc(v);
-                        schedule({description: v});
-                    }}
-                    onBlur={flush}
+                <DescriptionEditor
+                    value={task.description}
+                    onChange={(v) => schedule({description: v})}
+                    onSubmit={flushAndClose}
                     placeholder="Подробности, ссылки, критерии готовности"
                 />
             </section>
 
             <section className="mv-field">
-                <Text variant="subheader-1">Комментарии{task.comments.length ? ` · ${task.comments.length}` : ''}</Text>
-                {task.comments.length > 0 && (
-                    <ol className="mv-comments">
-                        {task.comments.map((c) => (
-                            <li key={c.id} className="mv-comment">
-                                <Text variant="caption-2" color="secondary" className="mv-comment__at">
-                                    {fmtDateTime.format(new Date(c.at))}
-                                </Text>
-                                <Text variant="body-1" className="mv-comment__text">
-                                    {c.text}
-                                </Text>
-                            </li>
-                        ))}
-                    </ol>
-                )}
-                <TextArea
-                    id="mv-task-comment"
-                    size="m"
-                    minRows={2}
-                    value={comment}
-                    onUpdate={setComment}
-                    placeholder="Заметка для себя. Ctrl+Enter, чтобы добавить"
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                            e.preventDefault();
-                            addComment();
-                        }
-                    }}
+                <Text variant="subheader-1">Теги</Text>
+                <TagInput
+                    id="mv-task-tags"
+                    tags={tags}
+                    tagMap={tagMap}
+                    value={task.tagIds}
+                    onUpdate={(v) => save({tagIds: v})}
+                    onCreateTag={onCreateTag}
+                    onSubmit={flushAndClose}
                 />
-                <div>
-                    <Button view="normal" size="m" onClick={addComment} disabled={!comment.trim()}>
-                        <Icon data={CommentIcon} size={16} />
-                        Добавить комментарий
-                    </Button>
-                </div>
             </section>
 
-            <div className="mv-details__foot">
-                {task.done ? (
-                    <Button view="action" size="l" onClick={a.onReopen}>
-                        <Icon data={ArrowUturnCcwLeft} size={16} />
-                        Вернуть в работу
-                    </Button>
-                ) : (
-                    <Button
-                        view="action"
-                        size="l"
-                        onClick={() => {
-                            flush();
-                            a.onComplete();
+            {!isNew && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">
+                        Комментарии{task.comments.length ? ` · ${task.comments.length}` : ''}
+                    </Text>
+                    <TextArea
+                        id="mv-task-comment"
+                        size="m"
+                        minRows={2}
+                        value={comment}
+                        onUpdate={setComment}
+                        placeholder="Заметка для себя. Ctrl+Enter, чтобы добавить"
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                                e.preventDefault();
+                                addComment();
+                            }
                         }}
-                    >
-                        <Icon data={CircleCheck} size={16} />
-                        Закрыть задачу
-                    </Button>
-                )}
-                {!task.done && list !== 'today' && (
-                    <Button view="outlined" size="l" onClick={a.onPlan}>
-                        <Icon data={Sun} size={16} />
-                        На сегодня
-                    </Button>
-                )}
-                {!task.done && list !== 'backlog' && (
-                    <Button view="outlined" size="l" onClick={a.onBacklog}>
-                        <Icon data={Tray} size={16} />В бэклог
-                    </Button>
-                )}
-                {!task.done && list !== 'focus' && (
-                    <Button view="outlined" size="l" onClick={a.onFocus}>
-                        <Icon data={Target} size={16} />
-                        Фокусная
-                    </Button>
-                )}
-                <span className="mv-spacer" />
-                {confirmDelete ? (
-                    <span className="mv-inline">
-                        <Text>Удалить?</Text>
-                        <Button view="outlined-danger" size="l" onClick={a.onDelete}>
-                            Да
-                        </Button>
-                        <Button view="flat" size="l" onClick={() => setConfirmDelete(false)}>
-                            Нет
-                        </Button>
-                    </span>
-                ) : (
-                    <Button view="flat-danger" size="l" onClick={() => setConfirmDelete(true)}>
-                        <Icon data={TrashBin} size={16} />
-                        Удалить
-                    </Button>
-                )}
-            </div>
+                    />
+                    {task.comments.length > 0 && (
+                        <ol className="mv-comments">
+                            {[...task.comments]
+                                .sort((x, y) => y.at.localeCompare(x.at))
+                                .map((c) => (
+                                    <li key={c.id} className="mv-comment">
+                                        <Text variant="caption-2" color="secondary" className="mv-comment__at">
+                                            {fmtDateTime.format(new Date(c.at))}
+                                        </Text>
+                                        <Text variant="body-1" className="mv-comment__text">
+                                            {c.text}
+                                        </Text>
+                                    </li>
+                                ))}
+                        </ol>
+                    )}
+                </section>
+            )}
         </div>
+    );
+}
+
+function SaveStatus({
+    state,
+    createdAt,
+    isNew,
+}: {
+    state: {kind: 'idle'} | {kind: 'pending'} | {kind: 'saved'; at: Date} | {kind: 'failed'};
+    createdAt: string;
+    isNew: boolean;
+}) {
+    if (state.kind === 'pending') {
+        return (
+            <Text variant="caption-2" color="secondary" aria-live="polite">
+                Сохраняю…
+            </Text>
+        );
+    }
+    if (state.kind === 'saved') {
+        return (
+            <Text variant="caption-2" color="secondary" className="mv-saved" aria-live="polite">
+                <Icon data={CircleCheck} size={12} />
+                Изменения сохранены в {fmtTime.format(state.at)}
+            </Text>
+        );
+    }
+    if (state.kind === 'failed') {
+        return (
+            <Text variant="caption-2" color="danger" aria-live="polite">
+                Не сохранено
+            </Text>
+        );
+    }
+    return (
+        <Text variant="caption-2" color="secondary">
+            {isNew ? 'Сохранится, как только появится название' : `создана ${fmtDateTime.format(new Date(createdAt))}`}
+        </Text>
     );
 }
 
@@ -1103,7 +1310,6 @@ function TagEditRow({
     onRemove: () => void;
 }) {
     const [name, setName] = React.useState(tag.name);
-    const [confirm, setConfirm] = React.useState(false);
     React.useEffect(() => setName(tag.name), [tag.name]);
     const commit = () => {
         const n = name.trim();
@@ -1126,20 +1332,9 @@ function TagEditRow({
                 </Text>
             </div>
             <ThemePicker value={tag.theme} onChange={(th) => onSave({...tag, theme: th})} name={name} />
-            {confirm ? (
-                <span className="mv-inline">
-                    <Button view="outlined-danger" size="m" onClick={onRemove}>
-                        Удалить
-                    </Button>
-                    <Button view="flat" size="m" onClick={() => setConfirm(false)}>
-                        Отмена
-                    </Button>
-                </span>
-            ) : (
-                <Button view="flat" size="m" onClick={() => setConfirm(true)} aria-label={`Удалить тег ${tag.name}`}>
-                    <Icon data={TrashBin} size={16} />
-                </Button>
-            )}
+            <Button view="flat" size="m" onClick={onRemove} aria-label={`Удалить тег ${tag.name}`}>
+                <Icon data={TrashBin} size={16} />
+            </Button>
         </li>
     );
 }

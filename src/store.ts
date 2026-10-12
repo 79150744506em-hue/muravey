@@ -7,6 +7,8 @@ export interface Backend {
     removeTask(id: string): Promise<void>;
     saveTag(t: Tag): Promise<void>;
     removeTag(id: string): Promise<void>;
+    /** Слить задачи и теги из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
+    importAll(tasks: Task[], tags: Tag[]): Promise<void>;
 }
 
 /* ---------- облачное хранилище артефакта (claude db) ---------- */
@@ -46,6 +48,10 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
         removeTask: (id) => queue('t:' + id, () => tasksCol.doc(id).delete()),
         saveTag: (t) => queue('g:' + t.id, () => tagsCol.doc(t.id).set({...t})),
         removeTag: (id) => queue('g:' + id, () => tagsCol.doc(id).delete()),
+        async importAll(tasks, tags) {
+            for (const t of tags) await queue('g:' + t.id, () => tagsCol.doc(t.id).set({...t}));
+            for (const t of tasks) await queue('t:' + t.id, () => tasksCol.doc(t.id).set({...t}));
+        },
     };
 }
 
@@ -135,6 +141,10 @@ function localBackend(): Backend {
             state = {...state, tags: state.tags.filter((x) => x.id !== id)};
             await commit();
         },
+        async importAll(tasks, tags) {
+            state = {tasks: tasks.reduce(upsert, state.tasks), tags: tags.reduce(upsert, state.tags)};
+            await commit();
+        },
     };
 }
 
@@ -209,6 +219,8 @@ function serverBackend(token: string): Backend {
         });
         chain = p.catch(() => {});
         return p.catch((e) => {
+            // правка не записалась — сразу берём правду с сервера, чтобы откатить оптимистичное состояние
+            void refresh();
             throw new Error(fail(e));
         });
     };
@@ -254,6 +266,8 @@ function serverBackend(token: string): Backend {
             send({action: 'removeTask', id}, (s) => ({...s, tasks: s.tasks.filter((x) => x.id !== id)})),
         saveTag: (t) => send({action: 'saveTag', item: t}, (s) => ({...s, tags: upsert(s.tags, t)})),
         removeTag: (id) => send({action: 'removeTag', id}, (s) => ({...s, tags: s.tags.filter((x) => x.id !== id)})),
+        importAll: (tasks, tags) =>
+            send({action: 'import', tasks, tags}, (s) => ({tasks: tasks.reduce(upsert, s.tasks), tags: tags.reduce(upsert, s.tags)})),
     };
 }
 

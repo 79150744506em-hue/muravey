@@ -20,6 +20,7 @@ export interface Task {
     done: boolean;
     doneAt: string | null;
     createdAt: string;
+    order?: number | null; // ручная сортировка внутри списка
 }
 
 export interface Tag {
@@ -44,4 +45,11 @@ export function dayKey(d = new Date()) {
 export function effectiveList(t: Task, today: string): ListKind {
     if (t.list === 'today' && t.plannedFor !== today) return 'backlog';
     return t.list;
+}
+
+/** Ключ сортировки внутри списка: ручной порядок, а без него — правило по умолчанию. */
+export function sortKey(t: Task, list: ListKind): number {
+    if (t.order != null && t.list === list) return t.order;
+    if (list === 'backlog') return -Date.parse(t.createdAt); // новые сверху
+    return 1e13 + Date.parse((list === 'today' && t.plannedAt) || t.createdAt); // новые снизу
 }

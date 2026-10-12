@@ -9,9 +9,20 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@diplodoc/cut-extension": "^1.1.7",
+    "@diplodoc/file-extension": "^0.2.6",
+    "@diplodoc/tabs-extension": "^3.10.7",
+    "@diplodoc/transform": "^4.78.5",
     "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/modifiers": "^9.0.0",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@gravity-ui/components": "^4.24.0",
     "@gravity-ui/icons": "^2.22.0",
+    "@gravity-ui/markdown-editor": "^15.48.2",
     "@gravity-ui/uikit": "^7.51.0",
+    "katex": "^0.16.47",
+    "markdown-it": "^13.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
