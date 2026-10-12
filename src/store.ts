@@ -1,0 +1,317 @@
+import type {Tag, Task} from './types';
+
+export interface Backend {
+    kind: 'cloud' | 'local' | 'server';
+    subscribe(onTasks: (t: Task[]) => void, onTags: (t: Tag[]) => void, onError: (msg: string) => void): () => void;
+    saveTask(t: Task): Promise<void>;
+    removeTask(id: string): Promise<void>;
+    saveTag(t: Tag): Promise<void>;
+    removeTag(id: string): Promise<void>;
+}
+
+/* ---------- облачное хранилище артефакта (claude db) ---------- */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type AnyDb = any;
+
+function cloudBackend(db: AnyDb, userId: string): Backend {
+    const root = db.doc(`data/users/${userId}/muravey`);
+    const tasksCol = root.collection('tasks');
+    const tagsCol = root.collection('tags');
+
+    // одна запись за раз на документ
+    const chains = new Map<string, Promise<void>>();
+    const queue = (key: string, fn: () => Promise<void>) => {
+        const prev = chains.get(key) ?? Promise.resolve();
+        const next = prev.catch(() => {}).then(fn);
+        chains.set(key, next);
+        next.finally(() => {
+            if (chains.get(key) === next) chains.delete(key);
+        });
+        return withRetry(next, fn);
+    };
+
+    return {
+        kind: 'cloud',
+        subscribe(onTasks, onTags, onError) {
+            const err = (e: {code?: string}) => onError(errorText(e?.code));
+            const u1 = tasksCol.onSnapshot((s: any) => onTasks(s.docs.map((d: any) => d.data() as Task)), err);
+            const u2 = tagsCol.onSnapshot((s: any) => onTags(s.docs.map((d: any) => d.data() as Tag)), err);
+            return () => {
+                u1();
+                u2();
+            };
+        },
+        saveTask: (t) => queue('t:' + t.id, () => tasksCol.doc(t.id).set({...t})),
+        removeTask: (id) => queue('t:' + id, () => tasksCol.doc(id).delete()),
+        saveTag: (t) => queue('g:' + t.id, () => tagsCol.doc(t.id).set({...t})),
+        removeTag: (id) => queue('g:' + id, () => tagsCol.doc(id).delete()),
+    };
+}
+
+async function withRetry(p: Promise<void>, fn: () => Promise<void>) {
+    try {
+        await p;
+    } catch (e: any) {
+        if (e?.code === 'unavailable') {
+            await new Promise((r) => setTimeout(r, 400 + Math.random() * 600));
+            try {
+                await fn();
+                return;
+            } catch (e2: any) {
+                throw new Error(errorText(e2?.code));
+            }
+        }
+        throw new Error(errorText(e?.code));
+    }
+}
+
+function errorText(code?: string) {
+    switch (code) {
+        case 'quota_exceeded':
+            return 'Хранилище заполнено. Удалите старые задачи, чтобы добавить новые.';
+        case 'invalid_argument':
+            return 'Не получилось сохранить: у этого просмотра нет прав на запись.';
+        case 'revoked':
+        case 'not_granted':
+            return 'Доступ к хранилищу закрыт. Обновите страницу.';
+        case 'resource_exhausted':
+            return 'Слишком много изменений подряд. Подождите пару секунд.';
+        default:
+            return 'Не получилось связаться с хранилищем. Изменения могут не сохраниться.';
+    }
+}
+
+/* ---------- запасной вариант: память браузера ---------- */
+
+const LS_KEY = 'muravey:v1';
+
+function localBackend(): Backend {
+    let state: {tasks: Task[]; tags: Tag[]} = {tasks: [], tags: []};
+    try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) state = JSON.parse(raw);
+    } catch {
+        /* хранилище недоступно */
+    }
+    const subs = new Set<{onTasks: (t: Task[]) => void; onTags: (t: Tag[]) => void}>();
+    const commit = async () => {
+        try {
+            localStorage.setItem(LS_KEY, JSON.stringify(state));
+        } catch {
+            /* приватное окно и т.п. */
+        }
+        subs.forEach((s) => {
+            s.onTasks(state.tasks);
+            s.onTags(state.tags);
+        });
+    };
+    const upsert = <T extends {id: string}>(arr: T[], item: T) => {
+        const i = arr.findIndex((x) => x.id === item.id);
+        return i === -1 ? [...arr, item] : arr.map((x) => (x.id === item.id ? item : x));
+    };
+    return {
+        kind: 'local',
+        subscribe(onTasks, onTags) {
+            const s = {onTasks, onTags};
+            subs.add(s);
+            onTasks(state.tasks);
+            onTags(state.tags);
+            return () => subs.delete(s);
+        },
+        async saveTask(t) {
+            state = {...state, tasks: upsert(state.tasks, t)};
+            await commit();
+        },
+        async removeTask(id) {
+            state = {...state, tasks: state.tasks.filter((x) => x.id !== id)};
+            await commit();
+        },
+        async saveTag(t) {
+            state = {...state, tags: upsert(state.tags, t)};
+            await commit();
+        },
+        async removeTag(id) {
+            state = {...state, tags: state.tags.filter((x) => x.id !== id)};
+            await commit();
+        },
+    };
+}
+
+/* ---------- свой сервер в Yandex Cloud ---------- */
+
+const TOKEN_KEY = 'muravey:token';
+const CACHE_KEY = 'muravey:server-cache';
+const POLL_MS = 30_000;
+
+async function api(body: Record<string, unknown>, token?: string) {
+    const res = await fetch('/api', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', ...(token ? {Authorization: 'Bearer ' + token} : {})},
+        body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || String(res.status)), {status: res.status});
+    return data;
+}
+
+function serverBackend(token: string): Backend {
+    type State = {tasks: Task[]; tags: Tag[]};
+    let state: State = {tasks: [], tags: []};
+    try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (raw) state = JSON.parse(raw);
+    } catch {
+        /* без кэша */
+    }
+    const subs = new Set<{onTasks: (t: Task[]) => void; onTags: (t: Tag[]) => void; onError: (m: string) => void}>();
+    const emit = () => {
+        try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+        } catch {
+            /* без кэша */
+        }
+        subs.forEach((s) => {
+            s.onTasks(state.tasks);
+            s.onTags(state.tags);
+        });
+    };
+    const fail = (e: {status?: number}) => {
+        if (e?.status === 401) {
+            try {
+                localStorage.removeItem(TOKEN_KEY);
+            } catch {
+                /* ничего */
+            }
+            window.location.reload();
+            return 'Нужно войти заново.';
+        }
+        return 'Не получилось связаться с сервером. Проверьте интернет, изменения могут не сохраниться.';
+    };
+
+    // операции отправляются по очереди; пока очередь не пуста, опрос сервера не перетирает локальные правки
+    let pending = 0;
+    let chain = Promise.resolve();
+    const send = (body: Record<string, unknown>, apply: (s: State) => State) => {
+        state = apply(state);
+        emit();
+        pending++;
+        const p = chain.then(async () => {
+            try {
+                const next = (await api(body, token)) as State;
+                if (pending === 1) {
+                    state = next;
+                    emit();
+                }
+            } finally {
+                pending--;
+            }
+        });
+        chain = p.catch(() => {});
+        return p.catch((e) => {
+            throw new Error(fail(e));
+        });
+    };
+    const refresh = async () => {
+        if (pending) return;
+        try {
+            const next = (await api({action: 'state'}, token)) as State;
+            if (!pending) {
+                state = next;
+                emit();
+            }
+        } catch (e) {
+            const msg = fail(e as {status?: number});
+            subs.forEach((s) => s.onError(msg));
+        }
+    };
+    const upsert = <T extends {id: string}>(arr: T[], item: T) => {
+        const i = arr.findIndex((x) => x.id === item.id);
+        return i === -1 ? [...arr, item] : arr.map((x) => (x.id === item.id ? item : x));
+    };
+
+    return {
+        kind: 'server',
+        subscribe(onTasks, onTags, onError) {
+            const s = {onTasks, onTags, onError};
+            subs.add(s);
+            onTasks(state.tasks);
+            onTags(state.tags);
+            refresh();
+            const id = window.setInterval(refresh, POLL_MS);
+            const onVis = () => document.visibilityState === 'visible' && refresh();
+            document.addEventListener('visibilitychange', onVis);
+            window.addEventListener('focus', refresh);
+            return () => {
+                subs.delete(s);
+                window.clearInterval(id);
+                document.removeEventListener('visibilitychange', onVis);
+                window.removeEventListener('focus', refresh);
+            };
+        },
+        saveTask: (t) => send({action: 'saveTask', item: t}, (s) => ({...s, tasks: upsert(s.tasks, t)})),
+        removeTask: (id) =>
+            send({action: 'removeTask', id}, (s) => ({...s, tasks: s.tasks.filter((x) => x.id !== id)})),
+        saveTag: (t) => send({action: 'saveTag', item: t}, (s) => ({...s, tags: upsert(s.tags, t)})),
+        removeTag: (id) => send({action: 'removeTag', id}, (s) => ({...s, tags: s.tags.filter((x) => x.id !== id)})),
+    };
+}
+
+export type Startup = {backend: Backend} | {login: (password: string) => Promise<Backend>};
+
+async function hasServer() {
+    if (!/^https?:$/.test(window.location.protocol)) return false;
+    try {
+        const ctrl = new AbortController();
+        const t = window.setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch('/api', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'ping'}),
+            signal: ctrl.signal,
+        });
+        window.clearTimeout(t);
+        return res.ok && (await res.json()).ok === true;
+    } catch {
+        return false;
+    }
+}
+
+export async function pickBackend(): Promise<Startup> {
+    let claude = (window as any).claude;
+    for (let i = 0; !claude && i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        claude = (window as any).claude;
+    }
+    if (claude && typeof claude.use === 'function') {
+        try {
+            const [db, user] = await Promise.all([claude.use('db'), claude.use('user')]);
+            const id = db && user ? await user.id() : null;
+            if (db && id) return {backend: cloudBackend(db, id)};
+        } catch {
+            /* падаем на локальное хранилище */
+        }
+        return {backend: localBackend()};
+    }
+    if (await hasServer()) {
+        let token: string | null = null;
+        try {
+            token = localStorage.getItem(TOKEN_KEY);
+        } catch {
+            /* нет хранилища */
+        }
+        if (token) return {backend: serverBackend(token)};
+        return {
+            login: async (password: string) => {
+                const {token: t} = await api({action: 'login', password});
+                try {
+                    localStorage.setItem(TOKEN_KEY, t);
+                } catch {
+                    /* войдём заново в следующий раз */
+                }
+                return serverBackend(t);
+            },
+        };
+    }
+    return {backend: localBackend()};
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.agents/
+.claude/
+skills-lock.json
+deploy/gateway.rendered.yaml
+test*.cjs

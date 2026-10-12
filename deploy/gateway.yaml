@@ -1,0 +1,18 @@
+openapi: 3.0.0
+info:
+  title: muravey
+  version: 1.0.0
+paths:
+  /:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: index.html
+        service_account_id: __SA_ID__
+  /api:
+    post:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: __FUNCTION_ID__
+        service_account_id: __SA_ID__
