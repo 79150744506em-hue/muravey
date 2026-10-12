@@ -4,9 +4,23 @@
 # Скрипт идемпотентный: при первом запуске создаёт ресурсы, потом только обновляет.
 set -euo pipefail
 
-: "${YC_SA_JSON_CREDENTIALS:?нет секрета YC_SA_JSON_CREDENTIALS}"
-: "${YC_FOLDER_ID:?нет секрета YC_FOLDER_ID}"
-: "${MURAVEY_PASSWORD:?нет секрета MURAVEY_PASSWORD}"
+# Ошибки пишем в аннотации GitHub Actions, чтобы их было видно в сводке запуска.
+ERR_LOG="$(mktemp)"
+exec 2> >(tee -a "$ERR_LOG" >&2)
+STEP="старт"
+on_error() {
+  local msg
+  msg="$(tail -c 1500 "$ERR_LOG" | tr '\n' ' ' | sed 's/%/%25/g')"
+  echo "::error title=Деплой упал на шаге: $STEP::строка $1: $2 :: $msg"
+}
+trap 'on_error $LINENO "$BASH_COMMAND"' ERR
+
+for NAME in YC_SA_JSON_CREDENTIALS YC_FOLDER_ID MURAVEY_PASSWORD; do
+  if [ -z "${!NAME:-}" ]; then
+    echo "::error title=Нет секрета $NAME::Добавьте секрет $NAME в Settings → Secrets and variables → Actions"
+    exit 1
+  fi
+done
 
 RUNTIME="${YC_FUNCTION_RUNTIME:-nodejs22}"
 BUCKET="muravey-${YC_FOLDER_ID}"
@@ -15,12 +29,13 @@ FN_NAME="muravey-api"
 GW_NAME="muravey"
 
 KEY_FILE="$(mktemp)"
-trap 'rm -f "$KEY_FILE" deploy/gateway.rendered.yaml' EXIT
+trap 'rm -f "$KEY_FILE" "$ERR_LOG" deploy/gateway.rendered.yaml' EXIT
+STEP="авторизация в Yandex Cloud"
 printf '%s' "$YC_SA_JSON_CREDENTIALS" > "$KEY_FILE"
 yc config set service-account-key "$KEY_FILE"
 yc config set folder-id "$YC_FOLDER_ID"
 
-echo "== Сервисный аккаунт для работы приложения"
+STEP="Сервисный аккаунт для работы приложения"; echo "== Сервисный аккаунт для работы приложения"
 SA_ID="$(yc iam service-account get --name "$SA_NAME" --format json 2>/dev/null | jq -r '.id // empty' || true)"
 if [ -z "$SA_ID" ]; then
   SA_ID="$(yc iam service-account create --name "$SA_NAME" --format json | jq -r .id)"
@@ -30,12 +45,12 @@ for ROLE in storage.editor functions.functionInvoker; do
     --service-account-id "$SA_ID" >/dev/null 2>&1 || echo "роль $ROLE уже выдана"
 done
 
-echo "== Бакет $BUCKET"
+STEP="Бакет $BUCKET"; echo "== Бакет $BUCKET"
 if ! yc storage bucket get "$BUCKET" >/dev/null 2>&1; then
   yc storage bucket create --name "$BUCKET" --max-size 1073741824 >/dev/null
 fi
 
-echo "== Загружаю index.html"
+STEP="Загружаю index.html"; echo "== Загружаю index.html"
 IAM_TOKEN="$(yc iam create-token)"
 curl -fsS -X PUT \
   -H "X-YaCloud-SubjectToken: $IAM_TOKEN" \
@@ -44,11 +59,12 @@ curl -fsS -X PUT \
   --data-binary @dist/index.html \
   "https://storage.yandexcloud.net/$BUCKET/index.html"
 
-echo "== Функция $FN_NAME"
+STEP="Функция $FN_NAME"; echo "== Функция $FN_NAME"
 if ! yc serverless function get --name "$FN_NAME" >/dev/null 2>&1; then
   yc serverless function create --name "$FN_NAME" >/dev/null
 fi
 PASSWORD_B64="$(printf '%s' "$MURAVEY_PASSWORD" | base64 -w0)"
+echo "::add-mask::$PASSWORD_B64"
 yc serverless function version create \
   --function-name "$FN_NAME" \
   --runtime "$RUNTIME" \
@@ -60,7 +76,7 @@ yc serverless function version create \
   --environment "BUCKET=$BUCKET,MURAVEY_PASSWORD_B64=$PASSWORD_B64" >/dev/null
 FN_ID="$(yc serverless function get --name "$FN_NAME" --format json | jq -r .id)"
 
-echo "== API-шлюз $GW_NAME"
+STEP="API-шлюз $GW_NAME"; echo "== API-шлюз $GW_NAME"
 sed -e "s|__BUCKET__|$BUCKET|g" -e "s|__SA_ID__|$SA_ID|g" -e "s|__FUNCTION_ID__|$FN_ID|g" \
   deploy/gateway.yaml > deploy/gateway.rendered.yaml
 if yc serverless api-gateway get --name "$GW_NAME" >/dev/null 2>&1; then
