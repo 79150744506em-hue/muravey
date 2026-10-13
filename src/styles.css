@@ -698,16 +698,74 @@ body {
 /* ---------- вход ---------- */
 .mv-login {
     min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding-inline: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--g-spacing-8);
+    padding: var(--g-spacing-6) 16px;
+    box-sizing: border-box;
+    background: radial-gradient(90% 60% at 50% 0%, rgba(255, 112, 67, 0.12), transparent 70%);
 }
 .mv-login__card {
     width: 100%;
-    max-width: 340px;
+    max-width: 360px;
     display: flex;
     flex-direction: column;
-    gap: var(--g-spacing-4);
+    gap: var(--g-spacing-3);
+}
+.mv-login__brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: var(--g-spacing-1);
+    margin-bottom: var(--g-spacing-3);
+}
+.mv-login__logo {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    margin-bottom: var(--g-spacing-2);
+}
+.g-root_theme_dark .mv-login__logo {
+    filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55));
+}
+.mv-login__tabs {
+    align-self: center;
+}
+.mv-login__or {
+    display: flex;
+    align-items: center;
+    gap: var(--g-spacing-3);
+}
+.mv-login__or::before,
+.mv-login__or::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--g-color-line-generic);
+}
+.mv-login__google {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+.mv-quote {
+    max-width: 420px;
+    min-height: 3em;
+    margin: 0;
+    text-align: center;
+    font-style: italic;
+    color: var(--g-color-text-secondary);
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+        opacity 0.4s,
+        transform 0.4s;
+}
+.mv-quote_on {
+    opacity: 1;
+    transform: none;
 }
 
 /* ---------- фильтр по тегам ---------- */

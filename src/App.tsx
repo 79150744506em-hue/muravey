@@ -34,6 +34,7 @@ import {
 
 import type {Backend} from './store';
 import {pickBackend} from './store';
+import type {LoginOptions} from './store';
 import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, sortKey, uid} from './types';
 import type {ListKind, Tag, TagTheme, Task} from './types';
@@ -82,11 +83,7 @@ function useToday() {
 
 export function App() {
     const [backend, setBackend] = React.useState<Backend | null>(null);
-    const [login, setLogin] = React.useState<{
-        password: (password: string) => Promise<void>;
-        google?: () => Promise<void>;
-        error?: string;
-    } | null>(null);
+    const [login, setLogin] = React.useState<{opts: LoginOptions; connect: (b: Backend) => void} | null>(null);
     const [tasks, setTasks] = React.useState<Task[] | null>(null);
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
@@ -148,7 +145,7 @@ export function App() {
         pickBackend().then((r) => {
             if (!alive) return;
             if ('backend' in r) connect(r.backend);
-            else setLogin({password: (password: string) => r.login(password).then(connect), google: r.google, error: r.loginError});
+            else setLogin({opts: r, connect});
         });
         return () => {
             alive = false;
@@ -379,7 +376,7 @@ export function App() {
         />
     );
 
-    if (login) return <LoginScreen onLogin={login.password} onGoogle={login.google} initialError={login.error} />;
+    if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
     return (
         <div className={`mv-app${view === 'backlog' ? ' mv-app_wide' : ''}`}>
@@ -564,67 +561,167 @@ export function App() {
 
 /* ---------------- части интерфейса ---------------- */
 
-function LoginScreen({
-    onLogin,
-    onGoogle,
-    initialError,
-}: {
-    onLogin: (password: string) => Promise<void>;
-    onGoogle?: () => Promise<void>;
-    initialError?: string;
-}) {
+// мотивация на экране входа: в основном про то, как работают муравьи
+const QUOTES = [
+    'Муравей поднимает груз в 10–50 раз тяжелее себя. Ваша задача на сегодня точно легче.',
+    'У муравьёв нет начальника: королева не раздаёт поручений. Каждый сам берёт то, что важнее сейчас.',
+    'Пустынные муравьи считают шаги, чтобы найти дорогу домой. Считай и ты: каждая закрытая задача — шаг.',
+    'Муравейник строится по одной хвоинке. День — по одной задаче.',
+    'Муравьи живут на Земле больше 100 миллионов лет. Секрет — понемногу, но каждый день.',
+    'Муравьи-листорезы за ночь могут обрить целое дерево. Маленькие куски складываются в большое дело.',
+    'В колонии отдыхает чуть ли не половина муравьёв — это резерв на важный момент. Отдых тоже часть продуктивности.',
+    'Муравьи-ткачи сшивают листья живой цепочкой. Сложное проще делать по частям.',
+    'Огненные муравьи сцепляются в плот и переживают наводнение. Вместе выплывать проще.',
+    'Тропа муравьёв появляется там, где прошёл первый. Начни — и дорога найдётся.',
+    'Муравьи договариваются запахом, а не совещаниями. Меньше созвонов — больше дела.',
+    'Муравей-разведчик не знает всего пути, он просто делает следующий шаг.',
+    'Катаглифис выходит за едой в самый зной, когда хищники прячутся. Делай важное, пока никто не отвлекает.',
+    'Муравьиная колония может пережить десятки лет, хотя каждый рабочий живёт месяцы. Системы сильнее усилий.',
+    'Если муравьиная тропа перегружена, часть муравьёв просто ждёт у входа. Не бери больше, чем унесёшь сегодня.',
+    'Муравьи убирают за собой: мусор — в отдельную камеру. Закрытые задачи тоже стоит убирать с глаз.',
+];
+
+function Quotes() {
+    const [i, setI] = React.useState(() => Math.floor(Math.random() * QUOTES.length));
+    const [shown, setShown] = React.useState(true);
+    React.useEffect(() => {
+        const id = window.setInterval(() => {
+            setShown(false);
+            window.setTimeout(() => {
+                setI((x) => (x + 1) % QUOTES.length);
+                setShown(true);
+            }, 400);
+        }, 8000);
+        return () => window.clearInterval(id);
+    }, []);
+    return (
+        <p className={`mv-quote${shown ? ' mv-quote_on' : ''}`} aria-live="polite">
+            {QUOTES[i]}
+        </p>
+    );
+}
+
+function GoogleLogo() {
+    return (
+        <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
+            <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+            <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+            <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+            <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+        </svg>
+    );
+}
+
+function LoginScreen({opts, onReady}: {opts: LoginOptions; onReady: (b: Backend) => void}) {
+    const [mode, setMode] = React.useState<'login' | 'signup'>('login');
+    const [email, setEmail] = React.useState(opts.defaultEmail ?? '');
     const [password, setPassword] = React.useState('');
     const [busy, setBusy] = React.useState(false);
-    const [err, setErr] = React.useState<string | null>(initialError ? 'Не получилось войти через Google.' : null);
+    const [err, setErr] = React.useState<string | null>(opts.loginError ? 'Не получилось войти через Google.' : null);
+    const [info, setInfo] = React.useState<string | null>(null);
+    const signup = mode === 'signup';
+    const ready = password.length >= (signup ? 6 : 1) && (!opts.withEmail || /\S+@\S+\.\S+/.test(email.trim()));
+
     const google = () => {
         setErr(null);
-        onGoogle?.().catch(() => setErr('Не получилось войти через Google.'));
+        opts.google?.().catch(() => setErr('Не получилось войти через Google.'));
+    };
+    const explain = (x: unknown) => {
+        const e = x as {status?: number; code?: string};
+        if (e.status === 401) return opts.withEmail ? 'Неверная почта или пароль.' : 'Неверный пароль.';
+        if (e.status === 409) return 'Такая почта уже зарегистрирована — войдите.';
+        if (e.code === 'signup_disabled') return 'Регистрация сейчас закрыта.';
+        if (e.code === 'weak_password') return 'Пароль слишком простой: нужно хотя бы 6 символов.';
+        if (e.code === 'email_not_confirmed') return 'Сначала подтвердите почту по ссылке из письма.';
+        return 'Сервер не ответил. Проверьте интернет и попробуйте ещё раз.';
     };
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!password) return;
+        if (!ready) return;
         setBusy(true);
         setErr(null);
+        setInfo(null);
         try {
-            await onLogin(password);
+            if (signup && opts.signUp) {
+                const b = await opts.signUp(email.trim(), password);
+                if (b) return onReady(b);
+                setInfo('Почти готово: мы отправили письмо на ' + email.trim() + '. Перейдите по ссылке из него.');
+                setMode('login');
+            } else {
+                onReady(await opts.login(password, email.trim()));
+                return;
+            }
         } catch (x) {
-            setErr(
-                (x as {status?: number}).status === 401
-                    ? 'Неверный пароль.'
-                    : 'Сервер не ответил. Проверьте интернет и попробуйте ещё раз.',
-            );
-            setBusy(false);
+            setErr(explain(x));
         }
+        setBusy(false);
     };
+
     return (
         <div className="mv-login">
             <form className="mv-login__card" onSubmit={submit}>
-                <div className="mv-brand">
-                    <img src={logo} alt="" className="mv-mark" />
-                    <Text variant="header-1" as="h1" className="mv-title">
+                <div className="mv-login__brand">
+                    <img src={logo} alt="" className="mv-login__logo" />
+                    <Text variant="display-1" as="h1" className="mv-title">
                         Муравей
                     </Text>
+                    <Text variant="body-2" color="secondary">
+                        Таск трекер для продуктивных
+                    </Text>
                 </div>
+
+                {opts.signUp && (
+                    <TabList value={mode} onUpdate={(v) => setMode(v as typeof mode)} size="m" className="mv-login__tabs">
+                        <Tab value="login">Вход</Tab>
+                        <Tab value="signup">Регистрация</Tab>
+                    </TabList>
+                )}
+
+                {opts.withEmail && (
+                    <TextInput
+                        id="mv-email"
+                        type="email"
+                        size="l"
+                        autoFocus
+                        autoComplete="username"
+                        value={email}
+                        onUpdate={setEmail}
+                        placeholder="Почта"
+                    />
+                )}
                 <TextInput
                     id="mv-password"
                     type="password"
                     size="l"
-                    autoFocus
+                    autoFocus={!opts.withEmail}
+                    autoComplete={signup ? 'new-password' : 'current-password'}
                     value={password}
                     onUpdate={setPassword}
-                    placeholder="Пароль"
+                    placeholder={signup ? 'Пароль, минимум 6 символов' : 'Пароль'}
                     validationState={err ? 'invalid' : undefined}
                     errorMessage={err ?? undefined}
                 />
-                <Button type="submit" view="action" size="l" width="max" loading={busy} disabled={!password}>
-                    Войти
+                {info && <Alert theme="info" message={info} />}
+                <Button type="submit" view="action" size="l" width="max" loading={busy} disabled={!ready}>
+                    {signup ? 'Зарегистрироваться' : 'Войти'}
                 </Button>
-                {onGoogle && (
-                    <Button view="outlined" size="l" width="max" onClick={google}>
-                        Войти через Google
-                    </Button>
+                {opts.google && (
+                    <>
+                        <div className="mv-login__or">
+                            <Text variant="caption-2" color="secondary">
+                                или
+                            </Text>
+                        </div>
+                        <Button view="outlined" size="l" width="max" onClick={google}>
+                            <span className="mv-login__google">
+                                <GoogleLogo />
+                                {signup ? 'Регистрация через Google' : 'Войти через Google'}
+                            </span>
+                        </Button>
+                    </>
                 )}
             </form>
+            <Quotes />
         </div>
     );
 }

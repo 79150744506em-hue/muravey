@@ -415,11 +415,30 @@ async function pickSupabase(): Promise<Startup> {
     const sb = createClient(SUPABASE_URL!, SUPABASE_KEY!, {auth: {flowType: 'pkce'}});
     const {data} = await sb.auth.getSession();
     if (data.session) return {backend: supabaseBackend(sb)};
+    const authError = (error: {status?: number; message: string; code?: string}) =>
+        Object.assign(new Error(error.message), {
+            // 400 на неверную пару, user_already_exists на занятую почту — приводим к понятным статусам
+            status: error.status === 400 ? 401 : error.code === 'user_already_exists' ? 409 : error.status,
+            code: error.code,
+        });
     return {
-        login: async (password: string) => {
-            const {error} = await sb.auth.signInWithPassword({email: SUPABASE_EMAIL ?? '', password});
-            if (error) throw Object.assign(new Error(error.message), {status: error.status === 400 ? 401 : error.status});
+        withEmail: true,
+        defaultEmail: SUPABASE_EMAIL,
+        login: async (password: string, email: string) => {
+            const {error} = await sb.auth.signInWithPassword({email, password});
+            if (error) throw authError(error);
             return supabaseBackend(sb);
+        },
+        // у каждого пользователя своё пространство: правила доступа в базе отдают только его записи
+        signUp: async (email: string, password: string) => {
+            const {data: d, error} = await sb.auth.signUp({
+                email,
+                password,
+                options: {emailRedirectTo: window.location.origin},
+            });
+            if (error) throw authError(error);
+            // если в Supabase включено подтверждение почты, сессии ещё нет — ждём письма
+            return d.session ? supabaseBackend(sb) : null;
         },
         // уходит на страницу Google и возвращается на сайт уже с сессией
         google: async () => {
@@ -430,9 +449,18 @@ async function pickSupabase(): Promise<Startup> {
     };
 }
 
-export type Startup =
-    | {backend: Backend}
-    | {login: (password: string) => Promise<Backend>; google?: () => Promise<void>; loginError?: string};
+export type LoginOptions = {
+    /** спрашивать почту (Supabase) или только пароль (свой сервер) */
+    withEmail: boolean;
+    defaultEmail?: string;
+    login: (password: string, email: string) => Promise<Backend>;
+    /** регистрация; null — аккаунт создан, но нужно подтвердить почту по письму */
+    signUp?: (email: string, password: string) => Promise<Backend | null>;
+    google?: () => Promise<void>;
+    loginError?: string;
+};
+
+export type Startup = {backend: Backend} | LoginOptions;
 
 async function hasServer() {
     if (!/^https?:$/.test(window.location.protocol)) return false;
@@ -478,6 +506,7 @@ export async function pickBackend(): Promise<Startup> {
         }
         if (token) return {backend: serverBackend(token)};
         return {
+            withEmail: false,
             login: async (password: string) => {
                 const {token: t} = await api({action: 'login', password});
                 try {
