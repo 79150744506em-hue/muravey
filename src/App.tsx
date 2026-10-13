@@ -498,6 +498,9 @@ export function App() {
                 )}
             </main>
 
+            {/* на рабочем экране цитата сменяется реже и не зачитывается экранным диктором */}
+            <Quotes every={20000} className="mv-quote_main" announce={false} />
+
             {backend?.kind === 'local' && (
                 <Text variant="caption-2" color="secondary" className="mv-footnote">
                     Задачи сохраняются в этом браузере.
@@ -581,7 +584,7 @@ const QUOTES = [
     'Муравьи убирают за собой: мусор — в отдельную камеру. Закрытые задачи тоже стоит убирать с глаз.',
 ];
 
-function Quotes() {
+function Quotes({every = 8000, className = '', announce = true}: {every?: number; className?: string; announce?: boolean}) {
     const [i, setI] = React.useState(() => Math.floor(Math.random() * QUOTES.length));
     const [shown, setShown] = React.useState(true);
     React.useEffect(() => {
@@ -591,11 +594,11 @@ function Quotes() {
                 setI((x) => (x + 1) % QUOTES.length);
                 setShown(true);
             }, 400);
-        }, 8000);
+        }, every);
         return () => window.clearInterval(id);
-    }, []);
+    }, [every]);
     return (
-        <p className={`mv-quote${shown ? ' mv-quote_on' : ''}`} aria-live="polite">
+        <p className={`mv-quote${shown ? ' mv-quote_on' : ''} ${className}`} aria-live={announce ? 'polite' : 'off'}>
             {QUOTES[i]}
         </p>
     );

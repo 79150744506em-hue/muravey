@@ -767,6 +767,15 @@ body {
     opacity: 1;
     transform: none;
 }
+.mv-quote_main {
+    align-self: center;
+    margin: var(--g-spacing-6) auto 0;
+    max-width: 520px;
+    min-height: 0;
+    font-size: var(--g-text-caption-2-font-size, 13px);
+    line-height: 1.5;
+    color: var(--g-color-text-hint);
+}
 
 /* ---------- фильтр по тегам ---------- */
 .mv-filter {
