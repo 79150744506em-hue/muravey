@@ -21,6 +21,7 @@ export interface Task {
     doneAt: string | null;
     createdAt: string;
     order?: number | null; // ручная сортировка внутри списка
+    parentId?: string | null; // фокусная задача, для которой эта — подзадача
 }
 
 export interface Tag {

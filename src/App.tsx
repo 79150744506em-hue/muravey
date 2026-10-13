@@ -10,6 +10,7 @@ import {
     Loader,
     Menu,
     Popup,
+    Select,
     useToaster,
     Tab,
     TabList,
@@ -208,7 +209,9 @@ export function App() {
     const planToday = (id: string) =>
         patch(id, {list: 'today', plannedFor: today, plannedAt: new Date().toISOString(), order: null});
     const toBacklog = (id: string) => patch(id, {list: 'backlog', plannedFor: null, plannedAt: null, order: null});
-    const toFocus = (id: string) => patch(id, {list: 'focus', plannedFor: null, plannedAt: null, order: null});
+    // фокусная задача всегда главная — сама подзадачей быть не может
+    const toFocus = (id: string) =>
+        patch(id, {list: 'focus', plannedFor: null, plannedAt: null, order: null, parentId: null});
 
     // задача id встала на своё место в упорядоченном списке moved: новый ключ — середина между соседями
     const placeIn = (list: ListKind, moved: Task[], id: string, extra: Partial<Task> = {}) => {
@@ -345,6 +348,39 @@ export function App() {
     const cardId = openId ?? draft?.id ?? null;
     const cardStored = all.find((t) => t.id === cardId) ?? null;
     const cardTask = cardStored ?? (draft && draft.id === cardId ? draft : null);
+
+    // связи «фокусная задача → подзадачи»: главная всегда одна и всегда фокусная
+    const byId = new Map(all.map((t) => [t.id, t]));
+    const focusTasks = all.filter((t) => t.list === 'focus' && !t.done);
+    const parentOf = (t: Task) => {
+        const p = t.parentId ? byId.get(t.parentId) : undefined;
+        return p && p.list === 'focus' && t.list !== 'focus' ? p : undefined;
+    };
+    const childrenOf = (id: string) => all.filter((t) => t.parentId === id && t.list !== 'focus');
+    const progressOf = (t: Task) => {
+        if (t.list !== 'focus') return undefined;
+        const kids = childrenOf(t.id);
+        return kids.length ? {done: kids.filter((k) => k.done).length, total: kids.length} : undefined;
+    };
+    const addChild = (parentId: string, title: string) => {
+        if (!backend) return;
+        run(
+            backend.saveTask({
+                id: uid(),
+                title,
+                description: '',
+                list: 'backlog',
+                plannedFor: null,
+                plannedAt: null,
+                tagIds: [],
+                comments: [],
+                done: false,
+                doneAt: null,
+                createdAt: new Date().toISOString(),
+                parentId,
+            }),
+        );
+    };
     const doneToday = all.filter((t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today).length;
 
     const createTag = (name: string): Tag => {
@@ -373,6 +409,9 @@ export function App() {
             onBacklog={() => toBacklog(t.id)}
             onFocus={() => toFocus(t.id)}
             onDelete={() => removeTask(t.id)}
+            parent={parentOf(t)}
+            progress={progressOf(t)}
+            onOpenParent={(id) => setOpenId(id)}
         />
     );
 
@@ -545,6 +584,21 @@ export function App() {
                             closeCard();
                         }}
                         onCreateTag={createTag}
+                        focusTasks={focusTasks}
+                        parent={parentOf(cardTask)}
+                        subtasks={childrenOf(cardTask.id)}
+                        linkable={all.filter(
+                            (t) => !t.done && t.list !== 'focus' && t.id !== cardTask.id && !parentOf(t),
+                        )}
+                        onOpenTask={(id) => {
+                            setDraft(null);
+                            setOpenId(id);
+                        }}
+                        onLinkChild={(id, parentId) => patch(id, {parentId})}
+                        onToggleChild={(c) =>
+                            patch(c.id, c.done ? {done: false, doneAt: null} : {done: true, doneAt: new Date().toISOString()})
+                        }
+                        onAddChild={(title) => addChild(cardTask.id, title)}
                     />
                 )}
             </Dialog>
@@ -1026,6 +1080,9 @@ function TaskRow({
     completing,
     onOpen,
     sortable = false,
+    parent,
+    progress,
+    onOpenParent,
     ...a
 }: {
     task: Task;
@@ -1034,6 +1091,11 @@ function TaskRow({
     completing: boolean;
     onOpen: () => void;
     sortable?: boolean;
+    /** фокусная задача, к которой относится эта */
+    parent?: Task;
+    /** у фокусной задачи: сколько подзадач закрыто */
+    progress?: {done: number; total: number};
+    onOpenParent?: (id: string) => void;
 } & RowActions) {
     const drag = useSortableRow(task.id, sortable);
     const menu = [
@@ -1073,6 +1135,29 @@ function TaskRow({
             <div className="mv-row__main">
                 <span className="mv-row__title">{task.title}</span>
                 <span className="mv-row__meta">
+                    {parent && (
+                        <button
+                            type="button"
+                            className="mv-parent-chip"
+                            title="Подзадача фокусной задачи — открыть её"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenParent?.(parent.id);
+                            }}
+                        >
+                            <Icon data={Target} size={12} />
+                            <span>{parent.title}</span>
+                        </button>
+                    )}
+                    {progress && (
+                        <span
+                            className={`mv-row__hint mv-progress${progress.done === progress.total ? ' mv-progress_full' : ''}`}
+                            title="Подзадачи: закрыто из всех"
+                        >
+                            <Icon data={CircleCheck} size={14} />
+                            {progress.done}/{progress.total}
+                        </span>
+                    )}
                     <TagLabels ids={task.tagIds} tagMap={tagMap} />
                     {task.description.trim() && (
                         <span className="mv-row__hint" title="Есть описание">
@@ -1128,6 +1213,14 @@ function TaskDetails({
     onPatch,
     onClose,
     onCreateTag,
+    focusTasks,
+    parent,
+    subtasks,
+    linkable,
+    onOpenTask,
+    onLinkChild,
+    onToggleChild,
+    onAddChild,
     ...a
 }: {
     task: Task;
@@ -1142,7 +1235,19 @@ function TaskDetails({
     onClose: () => void;
     onCreateTag: (name: string) => Tag;
     onComplete: () => void;
+    /** открытые фокусные задачи — к ним можно привязать эту */
+    focusTasks: Task[];
+    parent?: Task;
+    /** подзадачи, если это фокусная задача */
+    subtasks: Task[];
+    /** задачи, которые можно привязать к этой фокусной */
+    linkable: Task[];
+    onOpenTask: (id: string) => void;
+    onLinkChild: (id: string, parentId: string | null) => void;
+    onToggleChild: (t: Task) => void;
+    onAddChild: (title: string) => void;
 } & Omit<RowActions, 'onComplete'>) {
+    const [childTitle, setChildTitle] = React.useState('');
     const [title, setTitle] = React.useState(task.title);
     const [comment, setComment] = React.useState('');
 
@@ -1308,6 +1413,103 @@ function TaskDetails({
                     onSubmit={flushAndClose}
                 />
             </section>
+
+            {list !== 'focus' && (focusTasks.length > 0 || parent) && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Фокусная задача</Text>
+                    <div className="mv-inline">
+                        <Select
+                            id="mv-task-parent"
+                            size="s"
+                            width="auto"
+                            className="mv-parent-select"
+                            filterable={focusTasks.length > 7}
+                            value={[parent?.id ?? '']}
+                            onUpdate={([v]) => save({parentId: v || null})}
+                            options={[
+                                {value: '', content: 'Не относится к фокусной'},
+                                ...focusTasks.map((f) => ({value: f.id, content: f.title})),
+                            ]}
+                        />
+                        {parent && (
+                            <Button view="flat-secondary" size="s" onClick={() => onOpenTask(parent.id)}>
+                                Открыть
+                            </Button>
+                        )}
+                    </div>
+                </section>
+            )}
+
+            {list === 'focus' && !isNew && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">
+                        Подзадачи
+                        {subtasks.length > 0 &&
+                            ` · ${subtasks.filter((x) => x.done).length} из ${subtasks.length}`}
+                    </Text>
+                    {subtasks.length > 0 && (
+                        <ul className="mv-subtasks">
+                            {subtasks.map((c) => (
+                                <li key={c.id} className={`mv-subtask${c.done ? ' mv-subtask_done' : ''}`}>
+                                    <button
+                                        type="button"
+                                        className={`mv-check mv-check_s${c.done ? ' mv-check_on' : ''}`}
+                                        aria-label={c.done ? 'Вернуть в работу' : 'Закрыть подзадачу'}
+                                        onClick={() => onToggleChild(c)}
+                                    >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M6 12.5l4 4 8-9" />
+                                        </svg>
+                                    </button>
+                                    <button type="button" className="mv-subtask__title" onClick={() => onOpenTask(c.id)}>
+                                        {c.title}
+                                    </button>
+                                    <Text variant="caption-2" color="secondary">
+                                        {c.done ? 'выполнена' : LIST_NAMES[c.list === 'today' ? 'today' : 'backlog'].toLowerCase()}
+                                    </Text>
+                                    <Button
+                                        view="flat-secondary"
+                                        size="s"
+                                        onClick={() => onLinkChild(c.id, null)}
+                                        aria-label={`Отвязать «${c.title}»`}
+                                        title="Отвязать от фокусной задачи"
+                                    >
+                                        <Icon data={Xmark} size={14} />
+                                    </Button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                    <div className="mv-subtask-add">
+                        <TextInput
+                            id="mv-subtask-new"
+                            size="m"
+                            value={childTitle}
+                            onUpdate={setChildTitle}
+                            placeholder="Новая подзадача — Enter, чтобы добавить в бэклог"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && childTitle.trim()) {
+                                    e.preventDefault();
+                                    onAddChild(childTitle.trim());
+                                    setChildTitle('');
+                                }
+                            }}
+                        />
+                        {linkable.length > 0 && (
+                            <Select
+                                id="mv-subtask-link"
+                                size="m"
+                                width="auto"
+                                filterable={linkable.length > 7}
+                                placeholder="Привязать задачу…"
+                                value={[]}
+                                onUpdate={([v]) => v && onLinkChild(v, task.id)}
+                                options={linkable.map((t) => ({value: t.id, content: t.title}))}
+                            />
+                        )}
+                    </div>
+                </section>
+            )}
 
             {!isNew && (
                 <section className="mv-field">
