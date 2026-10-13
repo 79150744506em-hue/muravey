@@ -21,6 +21,7 @@
     "@gravity-ui/icons": "^2.22.0",
     "@gravity-ui/markdown-editor": "^15.48.2",
     "@gravity-ui/uikit": "^7.51.0",
+    "@supabase/supabase-js": "^2.117.3",
     "katex": "^0.16.47",
     "markdown-it": "^13.0.2",
     "react": "^18.3.1",

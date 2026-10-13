@@ -1,7 +1,8 @@
+import {createClient, type SupabaseClient} from '@supabase/supabase-js';
 import type {Tag, Task} from './types';
 
 export interface Backend {
-    kind: 'cloud' | 'local' | 'server';
+    kind: 'cloud' | 'local' | 'server' | 'supabase';
     subscribe(onTasks: (t: Task[]) => void, onTags: (t: Tag[]) => void, onError: (msg: string) => void): () => void;
     saveTask(t: Task): Promise<void>;
     removeTask(id: string): Promise<void>;
@@ -271,6 +272,146 @@ function serverBackend(token: string): Backend {
     };
 }
 
+/* ---------- Supabase (сайт на Netlify) ---------- */
+
+// Значения подставляются при сборке из переменных окружения Netlify. Без них приложение работает как раньше.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const SUPABASE_EMAIL = import.meta.env.VITE_MURAVEY_EMAIL as string | undefined;
+const TABLE = 'muravey_items';
+
+type Row = {kind: 'task' | 'tag'; id: string; data: Task | Tag};
+
+function supabaseBackend(sb: SupabaseClient): Backend {
+    type State = {tasks: Task[]; tags: Tag[]};
+    let state: State = {tasks: [], tags: []};
+    try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (raw) state = JSON.parse(raw);
+    } catch {
+        /* без кэша */
+    }
+    const subs = new Set<{onTasks: (t: Task[]) => void; onTags: (t: Tag[]) => void; onError: (m: string) => void}>();
+    const emit = () => {
+        try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+        } catch {
+            /* без кэша */
+        }
+        subs.forEach((s) => {
+            s.onTasks(state.tasks);
+            s.onTags(state.tags);
+        });
+    };
+    const failText = 'Не получилось связаться с базой. Проверьте интернет, изменения могут не сохраниться.';
+    const check = ({error}: {error: unknown}) => {
+        if (error) throw error;
+    };
+
+    // пока есть незаписанные правки, свежие данные из базы не перетирают оптимистичное состояние
+    let pending = 0;
+    let chain = Promise.resolve();
+    const send = (write: () => PromiseLike<{error: unknown}>, apply: (s: State) => State) => {
+        state = apply(state);
+        emit();
+        pending++;
+        const p = chain.then(async () => {
+            try {
+                check(await write());
+            } finally {
+                pending--;
+            }
+        });
+        chain = p.catch(() => {});
+        return p.then(
+            () => {
+                if (!pending) void refresh();
+            },
+            () => {
+                // правка не записалась — берём правду из базы, чтобы откатить оптимистичное состояние
+                void refresh();
+                throw new Error(failText);
+            },
+        );
+    };
+    const refresh = async () => {
+        if (pending) return;
+        const {data, error} = await sb.from(TABLE).select('kind,id,data');
+        if (error) {
+            subs.forEach((s) => s.onError(failText));
+            return;
+        }
+        if (pending) return;
+        const rows = data as Row[];
+        state = {
+            tasks: rows.filter((r) => r.kind === 'task').map((r) => r.data as Task),
+            tags: rows.filter((r) => r.kind === 'tag').map((r) => r.data as Tag),
+        };
+        emit();
+    };
+    const upsert = <T extends {id: string}>(arr: T[], item: T) => {
+        const i = arr.findIndex((x) => x.id === item.id);
+        return i === -1 ? [...arr, item] : arr.map((x) => (x.id === item.id ? item : x));
+    };
+    const put = (rows: Row[]) => sb.from(TABLE).upsert(rows, {onConflict: 'user_id,kind,id'});
+    const del = (kind: Row['kind'], id: string) => sb.from(TABLE).delete().eq('kind', kind).eq('id', id);
+
+    return {
+        kind: 'supabase',
+        subscribe(onTasks, onTags, onError) {
+            const s = {onTasks, onTags, onError};
+            subs.add(s);
+            onTasks(state.tasks);
+            onTags(state.tags);
+            void refresh();
+            // изменения с других устройств приходят через Realtime; данных мало, поэтому просто перечитываем всё
+            let timer = 0;
+            const soon = () => {
+                window.clearTimeout(timer);
+                timer = window.setTimeout(refresh, 300);
+            };
+            const channel = sb
+                .channel('muravey')
+                .on('postgres_changes', {event: '*', schema: 'public', table: TABLE}, soon)
+                .subscribe();
+            const onVis = () => document.visibilityState === 'visible' && refresh();
+            document.addEventListener('visibilitychange', onVis);
+            return () => {
+                subs.delete(s);
+                window.clearTimeout(timer);
+                void sb.removeChannel(channel);
+                document.removeEventListener('visibilitychange', onVis);
+            };
+        },
+        saveTask: (t) => send(() => put([{kind: 'task', id: t.id, data: t}]), (s) => ({...s, tasks: upsert(s.tasks, t)})),
+        removeTask: (id) => send(() => del('task', id), (s) => ({...s, tasks: s.tasks.filter((x) => x.id !== id)})),
+        saveTag: (t) => send(() => put([{kind: 'tag', id: t.id, data: t}]), (s) => ({...s, tags: upsert(s.tags, t)})),
+        removeTag: (id) => send(() => del('tag', id), (s) => ({...s, tags: s.tags.filter((x) => x.id !== id)})),
+        importAll: (tasks, tags) =>
+            send(
+                () =>
+                    put([
+                        ...tags.map((t): Row => ({kind: 'tag', id: t.id, data: t})),
+                        ...tasks.map((t): Row => ({kind: 'task', id: t.id, data: t})),
+                    ]),
+                (s) => ({tasks: tasks.reduce(upsert, s.tasks), tags: tags.reduce(upsert, s.tags)}),
+            ),
+    };
+}
+
+async function pickSupabase(): Promise<Startup> {
+    const sb = createClient(SUPABASE_URL!, SUPABASE_KEY!);
+    const {data} = await sb.auth.getSession();
+    if (data.session) return {backend: supabaseBackend(sb)};
+    return {
+        login: async (password: string) => {
+            const {error} = await sb.auth.signInWithPassword({email: SUPABASE_EMAIL ?? '', password});
+            if (error) throw Object.assign(new Error(error.message), {status: error.status === 400 ? 401 : error.status});
+            return supabaseBackend(sb);
+        },
+    };
+}
+
 export type Startup = {backend: Backend} | {login: (password: string) => Promise<Backend>};
 
 async function hasServer() {
@@ -307,6 +448,7 @@ export async function pickBackend(): Promise<Startup> {
         }
         return {backend: localBackend()};
     }
+    if (SUPABASE_URL && SUPABASE_KEY) return pickSupabase();
     if (await hasServer()) {
         let token: string | null = null;
         try {
