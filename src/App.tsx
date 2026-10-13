@@ -82,7 +82,11 @@ function useToday() {
 
 export function App() {
     const [backend, setBackend] = React.useState<Backend | null>(null);
-    const [login, setLogin] = React.useState<((password: string) => Promise<void>) | null>(null);
+    const [login, setLogin] = React.useState<{
+        password: (password: string) => Promise<void>;
+        google?: () => Promise<void>;
+        error?: string;
+    } | null>(null);
     const [tasks, setTasks] = React.useState<Task[] | null>(null);
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
@@ -144,7 +148,7 @@ export function App() {
         pickBackend().then((r) => {
             if (!alive) return;
             if ('backend' in r) connect(r.backend);
-            else setLogin(() => (password: string) => r.login(password).then(connect));
+            else setLogin({password: (password: string) => r.login(password).then(connect), google: r.google, error: r.loginError});
         });
         return () => {
             alive = false;
@@ -375,7 +379,7 @@ export function App() {
         />
     );
 
-    if (login) return <LoginScreen onLogin={login} />;
+    if (login) return <LoginScreen onLogin={login.password} onGoogle={login.google} initialError={login.error} />;
 
     return (
         <div className={`mv-app${view === 'backlog' ? ' mv-app_wide' : ''}`}>
@@ -560,10 +564,22 @@ export function App() {
 
 /* ---------------- части интерфейса ---------------- */
 
-function LoginScreen({onLogin}: {onLogin: (password: string) => Promise<void>}) {
+function LoginScreen({
+    onLogin,
+    onGoogle,
+    initialError,
+}: {
+    onLogin: (password: string) => Promise<void>;
+    onGoogle?: () => Promise<void>;
+    initialError?: string;
+}) {
     const [password, setPassword] = React.useState('');
     const [busy, setBusy] = React.useState(false);
-    const [err, setErr] = React.useState<string | null>(null);
+    const [err, setErr] = React.useState<string | null>(initialError ? 'Не получилось войти через Google.' : null);
+    const google = () => {
+        setErr(null);
+        onGoogle?.().catch(() => setErr('Не получилось войти через Google.'));
+    };
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!password) return;
@@ -603,6 +619,11 @@ function LoginScreen({onLogin}: {onLogin: (password: string) => Promise<void>}) 
                 <Button type="submit" view="action" size="l" width="max" loading={busy} disabled={!password}>
                     Войти
                 </Button>
+                {onGoogle && (
+                    <Button view="outlined" size="l" width="max" onClick={google}>
+                        Войти через Google
+                    </Button>
+                )}
             </form>
         </div>
     );

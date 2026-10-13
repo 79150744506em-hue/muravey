@@ -400,7 +400,7 @@ function supabaseBackend(sb: SupabaseClient): Backend {
 }
 
 async function pickSupabase(): Promise<Startup> {
-    const sb = createClient(SUPABASE_URL!, SUPABASE_KEY!);
+    const sb = createClient(SUPABASE_URL!, SUPABASE_KEY!, {auth: {flowType: 'pkce'}});
     const {data} = await sb.auth.getSession();
     if (data.session) return {backend: supabaseBackend(sb)};
     return {
@@ -409,10 +409,18 @@ async function pickSupabase(): Promise<Startup> {
             if (error) throw Object.assign(new Error(error.message), {status: error.status === 400 ? 401 : error.status});
             return supabaseBackend(sb);
         },
+        // уходит на страницу Google и возвращается на сайт уже с сессией
+        google: async () => {
+            const {error} = await sb.auth.signInWithOAuth({provider: 'google', options: {redirectTo: window.location.origin}});
+            if (error) throw error;
+        },
+        loginError: new URLSearchParams(window.location.search).get('error_description') ?? undefined,
     };
 }
 
-export type Startup = {backend: Backend} | {login: (password: string) => Promise<Backend>};
+export type Startup =
+    | {backend: Backend}
+    | {login: (password: string) => Promise<Backend>; google?: () => Promise<void>; loginError?: string};
 
 async function hasServer() {
     if (!/^https?:$/.test(window.location.protocol)) return false;
