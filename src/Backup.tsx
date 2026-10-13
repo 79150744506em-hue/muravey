@@ -1,6 +1,6 @@
 import React from 'react';
 import {Button, Dialog, DropdownMenu, Icon} from '@gravity-ui/uikit';
-import {ArrowDownToLine, ArrowUpFromLine, Ellipsis} from '@gravity-ui/icons';
+import {ArrowDownToLine, ArrowRightFromSquare, ArrowUpFromLine, Ellipsis} from '@gravity-ui/icons';
 
 import type {Backend} from './store';
 import type {Tag, Task} from './types';
@@ -128,6 +128,15 @@ export function BackupMenu({
                         action: () => fileRef.current?.click(),
                         disabled: !backend,
                     },
+                    ...(backend?.signOut
+                        ? [
+                              {
+                                  text: 'Выйти',
+                                  iconStart: <Icon data={ArrowRightFromSquare} size={16} />,
+                                  action: () => void backend.signOut?.(),
+                              },
+                          ]
+                        : []),
                 ]}
             />
             <input

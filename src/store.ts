@@ -10,6 +10,8 @@ export interface Backend {
     removeTag(id: string): Promise<void>;
     /** Слить задачи и теги из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
     importAll(tasks: Task[], tags: Tag[]): Promise<void>;
+    /** выйти из аккаунта (есть только там, где есть вход) */
+    signOut?(): Promise<void>;
 }
 
 /* ---------- облачное хранилище артефакта (claude db) ---------- */
@@ -396,6 +398,16 @@ function supabaseBackend(sb: SupabaseClient): Backend {
                     ]),
                 (s) => ({tasks: tasks.reduce(upsert, s.tasks), tags: tags.reduce(upsert, s.tags)}),
             ),
+        async signOut() {
+            await sb.auth.signOut();
+            // кэш задач принадлежит вышедшему пользователю — не оставляем его в браузере
+            try {
+                localStorage.removeItem(CACHE_KEY);
+            } catch {
+                /* ничего */
+            }
+            window.location.reload();
+        },
     };
 }
 
