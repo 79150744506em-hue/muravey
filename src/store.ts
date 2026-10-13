@@ -1,4 +1,4 @@
-import {createClient, type SupabaseClient} from '@supabase/supabase-js';
+import {createClient, isAuthRetryableFetchError, type SupabaseClient} from '@supabase/supabase-js';
 import type {Tag, Task} from './types';
 
 export interface Backend {
@@ -378,11 +378,19 @@ function supabaseBackend(sb: SupabaseClient): Backend {
                 .subscribe();
             const onVis = () => document.visibilityState === 'visible' && refresh();
             document.addEventListener('visibilitychange', onVis);
+            // сессия кончилась по-настоящему (ключ отозван) — показываем вход вместо молча падающих записей;
+            // ключ обновился после восстановления сети — перечитываем задачи.
+            // Внутри колбэка не ждём запросов к Supabase: библиотека держит в нём блокировку.
+            const {data: auth} = sb.auth.onAuthStateChange((event) => {
+                if (event === 'SIGNED_OUT') window.setTimeout(() => window.location.reload());
+                else if (event === 'TOKEN_REFRESHED') window.setTimeout(refresh);
+            });
             return () => {
                 subs.delete(s);
                 window.clearTimeout(timer);
                 void sb.removeChannel(channel);
                 document.removeEventListener('visibilitychange', onVis);
+                auth.subscription.unsubscribe();
             };
         },
         saveTask: (t) => send(() => put([{kind: 'task', id: t.id, data: t}]), (s) => ({...s, tasks: upsert(s.tasks, t)})),
@@ -399,13 +407,14 @@ function supabaseBackend(sb: SupabaseClient): Backend {
                 (s) => ({tasks: tasks.reduce(upsert, s.tasks), tags: tags.reduce(upsert, s.tags)}),
             ),
         async signOut() {
-            await sb.auth.signOut();
-            // кэш задач принадлежит вышедшему пользователю — не оставляем его в браузере
+            // кэш задач принадлежит вышедшему пользователю — стираем до выхода,
+            // потому что событие выхода сразу перезагружает страницу
             try {
                 localStorage.removeItem(CACHE_KEY);
             } catch {
                 /* ничего */
             }
+            await sb.auth.signOut();
             window.location.reload();
         },
     };
@@ -413,8 +422,20 @@ function supabaseBackend(sb: SupabaseClient): Backend {
 
 async function pickSupabase(): Promise<Startup> {
     const sb = createClient(SUPABASE_URL!, SUPABASE_KEY!, {auth: {flowType: 'pkce'}});
-    const {data} = await sb.auth.getSession();
+    // Сессия уже сохранена в браузере — открываем задачи сразу, не дожидаясь обновления ключа по сети.
+    // Если ключ окажется отозван, библиотека сообщит SIGNED_OUT, и мы покажем вход.
+    try {
+        const key = (sb.auth as unknown as {storageKey?: string}).storageKey;
+        if (key && localStorage.getItem(key)) return {backend: supabaseBackend(sb)};
+    } catch {
+        /* без хранилища — обычный путь */
+    }
+    const {data, error} = await sb.auth.getSession();
     if (data.session) return {backend: supabaseBackend(sb)};
+    // Ключ доступа живёт час, при открытии сайта он обновляется по сети. Если сети в этот момент нет
+    // (ноутбук только проснулся, телефон переключается между сетями), Supabase сохраняет сессию,
+    // но отвечает «сессии нет». Не выкидываем на вход: открываем задачи из кэша, ключ обновится сам.
+    if (error && isAuthRetryableFetchError(error)) return {backend: supabaseBackend(sb)};
     const authError = (error: {status?: number; message: string; code?: string}) =>
         Object.assign(new Error(error.message), {
             // 400 на неверную пару, user_already_exists на занятую почту — приводим к понятным статусам
