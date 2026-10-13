@@ -8,6 +8,9 @@ create table if not exists public.muravey_items (
     primary key (user_id, kind, id)
 );
 
+-- Доступ через Data API только для вошедшего пользователя.
+grant select, insert, update, delete on public.muravey_items to authenticated;
+
 -- Каждый видит и меняет только свои задачи и теги.
 alter table public.muravey_items enable row level security;
 drop policy if exists "own items" on public.muravey_items;
