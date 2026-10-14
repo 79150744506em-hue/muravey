@@ -21,6 +21,8 @@ import {
 import {
     ArrowUturnCcwLeft,
     CircleCheck,
+    Link,
+    LinkSlash,
     Grip,
     Comment as CommentIcon,
     Plus,
@@ -599,6 +601,10 @@ export function App() {
                             patch(c.id, c.done ? {done: false, doneAt: null} : {done: true, doneAt: new Date().toISOString()})
                         }
                         onAddChild={(title) => addChild(cardTask.id, title)}
+                        parentProgress={(() => {
+                            const p = parentOf(cardTask);
+                            return p ? progressOf(p) : undefined;
+                        })()}
                     />
                 )}
             </Dialog>
@@ -1073,6 +1079,55 @@ interface RowActions {
     onDelete: () => void;
 }
 
+/** Тонкая полоска прогресса подзадач. */
+function ProgressBar({done, total, wide}: {done: number; total: number; wide?: boolean}) {
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    return (
+        <span
+            className={`mv-bar${wide ? ' mv-bar_wide' : ''}${done === total && total ? ' mv-bar_full' : ''}`}
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+        >
+            <span className="mv-bar__fill" style={{width: pct + '%'}} />
+        </span>
+    );
+}
+
+/** Кнопка, открывающая список задач для выбора. */
+function TaskPicker({
+    id,
+    label,
+    icon,
+    tasks,
+    onPick,
+}: {
+    id: string;
+    label: string;
+    icon: typeof Link;
+    tasks: Task[];
+    onPick: (id: string) => void;
+}) {
+    return (
+        <Select
+            id={id}
+            value={[]}
+            filterable={tasks.length > 7}
+            filterPlaceholder="Найти задачу"
+            popupWidth={320}
+            onUpdate={([v]) => v && onPick(v)}
+            options={tasks.map((t) => ({value: t.id, content: t.title}))}
+            renderControl={({ref, triggerProps}) => (
+                <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
+                    <Icon data={icon} size={16} />
+                    {label}
+                </Button>
+            )}
+        />
+    );
+}
+
 function TaskRow({
     task,
     list,
@@ -1152,9 +1207,9 @@ function TaskRow({
                     {progress && (
                         <span
                             className={`mv-row__hint mv-progress${progress.done === progress.total ? ' mv-progress_full' : ''}`}
-                            title="Подзадачи: закрыто из всех"
+                            title={`Подзадачи: закрыто ${progress.done} из ${progress.total}`}
                         >
-                            <Icon data={CircleCheck} size={14} />
+                            <ProgressBar done={progress.done} total={progress.total} />
                             {progress.done}/{progress.total}
                         </span>
                     )}
@@ -1221,6 +1276,7 @@ function TaskDetails({
     onLinkChild,
     onToggleChild,
     onAddChild,
+    parentProgress,
     ...a
 }: {
     task: Task;
@@ -1246,6 +1302,7 @@ function TaskDetails({
     onLinkChild: (id: string, parentId: string | null) => void;
     onToggleChild: (t: Task) => void;
     onAddChild: (title: string) => void;
+    parentProgress?: {done: number; total: number};
 } & Omit<RowActions, 'onComplete'>) {
     const [childTitle, setChildTitle] = React.useState('');
     const [title, setTitle] = React.useState(task.title);
@@ -1417,68 +1474,93 @@ function TaskDetails({
             {list !== 'focus' && (focusTasks.length > 0 || parent) && (
                 <section className="mv-field">
                     <Text variant="subheader-1">Фокусная задача</Text>
-                    <div className="mv-inline">
-                        <Select
+                    {parent ? (
+                        <div className="mv-parent-card">
+                            <button type="button" className="mv-parent-card__main" onClick={() => onOpenTask(parent.id)}>
+                                <span className="mv-parent-card__icon">
+                                    <Icon data={Target} size={16} />
+                                </span>
+                                <span className="mv-parent-card__text">
+                                    <span className="mv-parent-card__title">{parent.title}</span>
+                                    <Text variant="caption-2" color="secondary">
+                                        {parentProgress
+                                            ? `Подзадач закрыто: ${parentProgress.done} из ${parentProgress.total}`
+                                            : 'Открыть фокусную задачу'}
+                                    </Text>
+                                </span>
+                                {parentProgress && <ProgressBar done={parentProgress.done} total={parentProgress.total} />}
+                            </button>
+                            <ActionTooltip title="Отвязать от фокусной">
+                                <Button view="flat-secondary" size="m" onClick={() => save({parentId: null})} aria-label="Отвязать от фокусной задачи">
+                                    <Icon data={LinkSlash} size={16} />
+                                </Button>
+                            </ActionTooltip>
+                        </div>
+                    ) : (
+                        <TaskPicker
                             id="mv-task-parent"
-                            size="s"
-                            width="auto"
-                            className="mv-parent-select"
-                            filterable={focusTasks.length > 7}
-                            value={[parent?.id ?? '']}
-                            onUpdate={([v]) => save({parentId: v || null})}
-                            options={[
-                                {value: '', content: 'Не относится к фокусной'},
-                                ...focusTasks.map((f) => ({value: f.id, content: f.title})),
-                            ]}
+                            label="Привязать к фокусной задаче"
+                            icon={Target}
+                            tasks={focusTasks}
+                            onPick={(id) => save({parentId: id})}
                         />
-                        {parent && (
-                            <Button view="flat-secondary" size="s" onClick={() => onOpenTask(parent.id)}>
-                                Открыть
-                            </Button>
-                        )}
-                    </div>
+                    )}
                 </section>
             )}
 
             {list === 'focus' && !isNew && (
                 <section className="mv-field">
-                    <Text variant="subheader-1">
-                        Подзадачи
-                        {subtasks.length > 0 &&
-                            ` · ${subtasks.filter((x) => x.done).length} из ${subtasks.length}`}
-                    </Text>
-                    {subtasks.length > 0 && (
-                        <ul className="mv-subtasks">
-                            {subtasks.map((c) => (
-                                <li key={c.id} className={`mv-subtask${c.done ? ' mv-subtask_done' : ''}`}>
-                                    <button
-                                        type="button"
-                                        className={`mv-check mv-check_s${c.done ? ' mv-check_on' : ''}`}
-                                        aria-label={c.done ? 'Вернуть в работу' : 'Закрыть подзадачу'}
-                                        onClick={() => onToggleChild(c)}
-                                    >
-                                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                                            <path d="M6 12.5l4 4 8-9" />
-                                        </svg>
-                                    </button>
-                                    <button type="button" className="mv-subtask__title" onClick={() => onOpenTask(c.id)}>
-                                        {c.title}
-                                    </button>
-                                    <Text variant="caption-2" color="secondary">
-                                        {c.done ? 'выполнена' : LIST_NAMES[c.list === 'today' ? 'today' : 'backlog'].toLowerCase()}
-                                    </Text>
-                                    <Button
-                                        view="flat-secondary"
-                                        size="s"
-                                        onClick={() => onLinkChild(c.id, null)}
-                                        aria-label={`Отвязать «${c.title}»`}
-                                        title="Отвязать от фокусной задачи"
-                                    >
-                                        <Icon data={Xmark} size={14} />
-                                    </Button>
-                                </li>
-                            ))}
-                        </ul>
+                    <div className="mv-subtasks__head">
+                        <Text variant="subheader-1">Подзадачи</Text>
+                        {subtasks.length > 0 && (
+                            <Text variant="caption-2" color="secondary">
+                                {subtasks.filter((x) => x.done).length} из {subtasks.length}
+                            </Text>
+                        )}
+                    </div>
+                    {subtasks.length > 0 ? (
+                        <>
+                            <ProgressBar done={subtasks.filter((x) => x.done).length} total={subtasks.length} wide />
+                            <ul className="mv-subtasks">
+                                {subtasks.map((c) => (
+                                    <li key={c.id} className={`mv-subtask${c.done ? ' mv-subtask_done' : ''}`}>
+                                        <button
+                                            type="button"
+                                            className={`mv-check mv-check_s${c.done ? ' mv-check_on' : ''}`}
+                                            aria-label={c.done ? 'Вернуть в работу' : 'Закрыть подзадачу'}
+                                            onClick={() => onToggleChild(c)}
+                                        >
+                                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M6 12.5l4 4 8-9" />
+                                            </svg>
+                                        </button>
+                                        <button type="button" className="mv-subtask__title" onClick={() => onOpenTask(c.id)}>
+                                            {c.title}
+                                        </button>
+                                        {!c.done && c.list === 'today' && (
+                                            <span className="mv-subtask__where" title="Запланирована на сегодня">
+                                                <Icon data={Sun} size={14} />
+                                            </span>
+                                        )}
+                                        <ActionTooltip title="Отвязать">
+                                            <Button
+                                                view="flat-secondary"
+                                                size="s"
+                                                className="mv-subtask__unlink"
+                                                onClick={() => onLinkChild(c.id, null)}
+                                                aria-label={`Отвязать «${c.title}»`}
+                                            >
+                                                <Icon data={LinkSlash} size={14} />
+                                            </Button>
+                                        </ActionTooltip>
+                                    </li>
+                                ))}
+                            </ul>
+                        </>
+                    ) : (
+                        <Text color="secondary" className="mv-subtasks__empty">
+                            Разбейте фокусную задачу на шаги — подзадачи попадут в бэклог, а здесь будет виден прогресс.
+                        </Text>
                     )}
                     <div className="mv-subtask-add">
                         <TextInput
@@ -1486,7 +1568,8 @@ function TaskDetails({
                             size="m"
                             value={childTitle}
                             onUpdate={setChildTitle}
-                            placeholder="Новая подзадача — Enter, чтобы добавить в бэклог"
+                            startContent={<Icon data={Plus} size={16} className="mv-subtask-add__plus" />}
+                            placeholder="Новая подзадача"
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && childTitle.trim()) {
                                     e.preventDefault();
@@ -1496,15 +1579,12 @@ function TaskDetails({
                             }}
                         />
                         {linkable.length > 0 && (
-                            <Select
+                            <TaskPicker
                                 id="mv-subtask-link"
-                                size="m"
-                                width="auto"
-                                filterable={linkable.length > 7}
-                                placeholder="Привязать задачу…"
-                                value={[]}
-                                onUpdate={([v]) => v && onLinkChild(v, task.id)}
-                                options={linkable.map((t) => ({value: t.id, content: t.title}))}
+                                label="Привязать"
+                                icon={Link}
+                                tasks={linkable}
+                                onPick={(id) => onLinkChild(id, task.id)}
                             />
                         )}
                     </div>
