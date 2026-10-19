@@ -1,7 +1,9 @@
 name: Deploy to Yandex Cloud
 
-# Основной хостинг теперь Netlify + Supabase (netlify.toml). Деплой в Яндекс запускается только вручную.
+# Основной хостинг — Yandex Cloud: каждый пуш в main выкладывает сайт. Можно запустить и вручную.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
