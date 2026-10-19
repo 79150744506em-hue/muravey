@@ -105,6 +105,14 @@ else
 fi
 DOMAIN="$(yc serverless api-gateway get --name "$GW_NAME" --format json | jq -r .domain)"
 
+STEP="Проверка сайта"; echo "== Проверка сайта"
+sleep 5
+for PATH_ in / /privacy.html; do
+  echo "GET $PATH_ → $(curl -s -o /dev/null -w '%{http_code}, %{size_download} байт' "https://$DOMAIN$PATH_")"
+done
+echo "POST /api ping → $(curl -s -X POST -H 'Content-Type: application/json' -d '{"action":"ping"}' "https://$DOMAIN/api")"
+echo "POST /api login → $(curl -s -X POST -H 'Content-Type: application/json' -d '{"action":"login","email":"nobody@example.com","password":"x"}' "https://$DOMAIN/api")"
+
 echo "Готово: https://$DOMAIN"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   echo "### Муравей опубликован: https://$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
