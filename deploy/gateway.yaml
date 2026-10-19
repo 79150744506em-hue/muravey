@@ -10,6 +10,13 @@ paths:
         bucket: __BUCKET__
         object: index.html
         service_account_id: __SA_ID__
+  /privacy.html:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: privacy.html
+        service_account_id: __SA_ID__
   /api:
     post:
       x-yc-apigateway-integration:

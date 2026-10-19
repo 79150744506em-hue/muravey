@@ -164,11 +164,29 @@ async function api(body: Record<string, unknown>, token?: string) {
         body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.error || String(res.status)), {status: res.status});
+    if (!res.ok) throw Object.assign(new Error(data.error || String(res.status)), {status: res.status, code: data.error});
     return data;
 }
 
-function serverBackend(token: string): Backend {
+const saveToken = (t: string) => {
+    try {
+        localStorage.setItem(TOKEN_KEY, t);
+    } catch {
+        /* войдём заново в следующий раз */
+    }
+};
+
+const forget = () => {
+    try {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(CACHE_KEY);
+    } catch {
+        /* ничего */
+    }
+};
+
+function serverBackend(initialToken: string): Backend {
+    let token = initialToken;
     type State = {tasks: Task[]; tags: Tag[]};
     let state: State = {tasks: [], tags: []};
     try {
@@ -191,11 +209,7 @@ function serverBackend(token: string): Backend {
     };
     const fail = (e: {status?: number}) => {
         if (e?.status === 401) {
-            try {
-                localStorage.removeItem(TOKEN_KEY);
-            } catch {
-                /* ничего */
-            }
+            forget();
             window.location.reload();
             return 'Нужно войти заново.';
         }
@@ -230,7 +244,12 @@ function serverBackend(token: string): Backend {
     const refresh = async () => {
         if (pending) return;
         try {
-            const next = (await api({action: 'state'}, token)) as State;
+            const {token: fresh, ...next} = (await api({action: 'state'}, token)) as State & {token?: string};
+            // сервер продлевает ключ входа при каждом открытии
+            if (fresh) {
+                token = fresh;
+                saveToken(fresh);
+            }
             if (!pending) {
                 state = next;
                 emit();
@@ -271,6 +290,79 @@ function serverBackend(token: string): Backend {
         removeTag: (id) => send({action: 'removeTag', id}, (s) => ({...s, tags: s.tags.filter((x) => x.id !== id)})),
         importAll: (tasks, tags) =>
             send({action: 'import', tasks, tags}, (s) => ({tasks: tasks.reduce(upsert, s.tasks), tags: tags.reduce(upsert, s.tags)})),
+        async signOut() {
+            forget();
+            window.location.reload();
+        },
+    };
+}
+
+const NONCE_KEY = 'muravey:google-nonce';
+
+/** Вошли под новым аккаунтом: кэш задач прежнего пользователя не показываем */
+function signedIn(token: string) {
+    forget();
+    saveToken(token);
+    return serverBackend(token);
+}
+
+async function pickServer(google?: string): Promise<Startup> {
+    // вернулись со страницы Google: в адресе после # лежит id_token или ошибка
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    let loginError: string | undefined;
+    if (hash.has('id_token') || hash.has('error')) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        let nonce: string | null = null;
+        try {
+            nonce = sessionStorage.getItem(NONCE_KEY);
+            sessionStorage.removeItem(NONCE_KEY);
+        } catch {
+            /* без nonce сервер откажет */
+        }
+        if (hash.has('id_token')) {
+            try {
+                const {token} = await api({action: 'google', idToken: hash.get('id_token'), nonce});
+                return {backend: signedIn(token)};
+            } catch {
+                loginError = 'google';
+            }
+        } else {
+            loginError = hash.get('error') ?? 'google';
+        }
+    }
+
+    let token: string | null = null;
+    try {
+        token = localStorage.getItem(TOKEN_KEY);
+    } catch {
+        /* нет хранилища */
+    }
+    // ключ старого формата (до аккаунтов) сервер не примет — вход покажется после первого запроса
+    if (token) return {backend: serverBackend(token)};
+    return {
+        withEmail: true,
+        login: async (password: string, email: string) => signedIn((await api({action: 'login', email, password})).token),
+        signUp: async (email: string, password: string) => signedIn((await api({action: 'signup', email, password})).token),
+        google: google
+            ? async () => {
+                  const nonce = crypto.randomUUID();
+                  try {
+                      sessionStorage.setItem(NONCE_KEY, nonce);
+                  } catch {
+                      /* без nonce сервер откажет */
+                  }
+                  const q = new URLSearchParams({
+                      client_id: google,
+                      redirect_uri: window.location.origin + '/',
+                      response_type: 'id_token',
+                      scope: 'openid email',
+                      nonce,
+                      prompt: 'select_account',
+                  });
+                  window.location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + q);
+              }
+            : undefined,
+        loginError,
     };
 }
 
@@ -483,8 +575,9 @@ export type LoginOptions = {
 
 export type Startup = {backend: Backend} | LoginOptions;
 
-async function hasServer() {
-    if (!/^https?:$/.test(window.location.protocol)) return false;
+/** Свой сервер отвечает на ping; заодно сообщает, включён ли вход через Google */
+async function findServer(): Promise<{google?: string} | null> {
+    if (!/^https?:$/.test(window.location.protocol)) return null;
     try {
         const ctrl = new AbortController();
         const t = window.setTimeout(() => ctrl.abort(), 4000);
@@ -495,9 +588,10 @@ async function hasServer() {
             signal: ctrl.signal,
         });
         window.clearTimeout(t);
-        return res.ok && (await res.json()).ok === true;
+        const data = res.ok ? await res.json() : null;
+        return data?.ok === true ? {google: data.google} : null;
     } catch {
-        return false;
+        return null;
     }
 }
 
@@ -518,26 +612,7 @@ export async function pickBackend(): Promise<Startup> {
         return {backend: localBackend()};
     }
     if (SUPABASE_URL && SUPABASE_KEY) return pickSupabase();
-    if (await hasServer()) {
-        let token: string | null = null;
-        try {
-            token = localStorage.getItem(TOKEN_KEY);
-        } catch {
-            /* нет хранилища */
-        }
-        if (token) return {backend: serverBackend(token)};
-        return {
-            withEmail: false,
-            login: async (password: string) => {
-                const {token: t} = await api({action: 'login', password});
-                try {
-                    localStorage.setItem(TOKEN_KEY, t);
-                } catch {
-                    /* войдём заново в следующий раз */
-                }
-                return serverBackend(t);
-            },
-        };
-    }
+    const server = await findServer();
+    if (server) return pickServer(server.google);
     return {backend: localBackend()};
 }

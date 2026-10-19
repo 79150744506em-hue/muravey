@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Выкладывает Муравья в Yandex Cloud. Запускается из GitHub Actions после сборки (dist/index.html).
-# Нужны переменные: YC_SA_JSON_CREDENTIALS, YC_FOLDER_ID, MURAVEY_PASSWORD.
+# Нужны переменные: YC_SA_JSON_CREDENTIALS, YC_FOLDER_ID, MURAVEY_PASSWORD (секрет для подписи ключей входа).
+# Необязательная GOOGLE_CLIENT_ID включает вход через Google.
 # Скрипт идемпотентный: при первом запуске создаёт ресурсы, потом только обновляет.
 set -euo pipefail
 
@@ -62,14 +63,16 @@ if ! yc storage bucket get "$BUCKET" >/dev/null 2>&1; then
   yc storage bucket create --name "$BUCKET" --max-size 1073741824 >/dev/null
 fi
 
-STEP="Загружаю index.html"; echo "== Загружаю index.html"
+STEP="Загружаю страницы"; echo "== Загружаю страницы"
 IAM_TOKEN="$(yc iam create-token)"
-curl -fsS -X PUT \
-  -H "X-YaCloud-SubjectToken: $IAM_TOKEN" \
-  -H "Content-Type: text/html; charset=utf-8" \
-  -H "Cache-Control: no-cache" \
-  --data-binary @dist/index.html \
-  "https://storage.yandexcloud.net/$BUCKET/index.html"
+for PAGE in index.html privacy.html; do
+  curl -fsS -X PUT \
+    -H "X-YaCloud-SubjectToken: $IAM_TOKEN" \
+    -H "Content-Type: text/html; charset=utf-8" \
+    -H "Cache-Control: no-cache" \
+    --data-binary @"dist/$PAGE" \
+    "https://storage.yandexcloud.net/$BUCKET/$PAGE"
+done
 
 STEP="Функция $FN_NAME"; echo "== Функция $FN_NAME"
 echo "::notice title=Диагностика::$(curl -s -o /dev/null -w 'serverless-functions.api %{http_code} за %{time_total}с' --max-time 20 https://serverless-functions.api.cloud.yandex.net/ || echo 'serverless-functions.api недоступен')"
@@ -86,7 +89,7 @@ retry yc serverless function version create \
   --execution-timeout 10s \
   --source-path api \
   --service-account-id "$SA_ID" \
-  --environment "BUCKET=$BUCKET,MURAVEY_PASSWORD_B64=$PASSWORD_B64" >/dev/null
+  --environment "BUCKET=$BUCKET,MURAVEY_PASSWORD_B64=$PASSWORD_B64,GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}" >/dev/null
 FN_ID="$(yc serverless function get --name "$FN_NAME" --format json | jq -r .id)"
 
 STEP="API-шлюз $GW_NAME"; echo "== API-шлюз $GW_NAME"
