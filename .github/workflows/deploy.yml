@@ -34,5 +34,6 @@ jobs:
           YC_SA_JSON_CREDENTIALS: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
           YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
           MURAVEY_PASSWORD: ${{ secrets.MURAVEY_PASSWORD }}
-          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          # Client ID не секрет: он и так виден на странице входа Google
+          GOOGLE_CLIENT_ID: 715842427084-4tb6mu4i080c770mvis1234om4rs2tbq.apps.googleusercontent.com
         run: bash deploy/deploy.sh
