@@ -1,8 +1,0 @@
-# Netlify собирает сайт из репозитория при каждом пуше в main.
-# Переменные VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY и VITE_MURAVEY_EMAIL задаются в настройках сайта на Netlify.
-[build]
-  command = "npm run build"
-  publish = "dist"
-
-[build.environment]
-  NODE_VERSION = "22"
