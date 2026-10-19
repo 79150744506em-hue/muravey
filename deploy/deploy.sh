@@ -81,6 +81,9 @@ if ! yc serverless function get --name "$FN_NAME" >/dev/null 2>&1; then
 fi
 PASSWORD_B64="$(printf '%s' "$MURAVEY_PASSWORD" | base64 -w0)"
 echo "::add-mask::$PASSWORD_B64"
+FN_ENV="BUCKET=$BUCKET,MURAVEY_PASSWORD_B64=$PASSWORD_B64"
+# пустые значения переменных Yandex не принимает
+if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then FN_ENV="$FN_ENV,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"; fi
 retry yc serverless function version create \
   --function-name "$FN_NAME" \
   --runtime "$RUNTIME" \
@@ -89,7 +92,7 @@ retry yc serverless function version create \
   --execution-timeout 10s \
   --source-path api \
   --service-account-id "$SA_ID" \
-  --environment "BUCKET=$BUCKET,MURAVEY_PASSWORD_B64=$PASSWORD_B64,GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}" >/dev/null
+  --environment "$FN_ENV" >/dev/null
 FN_ID="$(yc serverless function get --name "$FN_NAME" --format json | jq -r .id)"
 
 STEP="API-шлюз $GW_NAME"; echo "== API-шлюз $GW_NAME"
