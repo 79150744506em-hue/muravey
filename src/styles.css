@@ -1261,3 +1261,143 @@ body {
     margin-inline: 10px 2px;
     color: var(--g-color-text-hint);
 }
+
+/* ---------- голодная обезьяна: неделю ничего не происходило ---------- */
+.mv-row_hungry {
+    background: linear-gradient(90deg, var(--g-color-base-warning-light) 0%, transparent 70%);
+}
+.mv-hungry {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 8px 1px 4px;
+    border-radius: 999px;
+    background: var(--g-color-base-warning-medium);
+    color: var(--g-color-text-warning-heavy);
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: help;
+}
+.mv-hungry__monkey {
+    display: inline-block;
+    font-size: 14px;
+    transform-origin: 50% 90%;
+    animation: mv-hungry-beg 3.2s ease-in-out infinite;
+}
+@keyframes mv-hungry-beg {
+    0%, 70%, 100% { transform: rotate(0); }
+    76% { transform: rotate(-14deg); }
+    82% { transform: rotate(12deg); }
+    88% { transform: rotate(-8deg); }
+    94% { transform: rotate(4deg); }
+}
+
+/* обезьяну покормили */
+.mv-feast {
+    position: fixed;
+    left: 50%;
+    bottom: 40px;
+    z-index: 100001;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px 10px 14px;
+    border-radius: 999px;
+    background: var(--g-color-base-float);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+    pointer-events: none;
+    animation: mv-feast-in 3s ease both;
+}
+@keyframes mv-feast-in {
+    0% { opacity: 0; transform: translate(-50%, 24px) scale(0.9); }
+    8%, 88% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, 12px) scale(0.96); }
+}
+.mv-feast__stage {
+    position: relative;
+    width: 76px;
+    height: 48px;
+}
+.mv-feast__monkey {
+    position: absolute;
+    left: 4px;
+    bottom: 0;
+    width: 40px;
+    height: 40px;
+    font-size: 36px;
+    line-height: 40px;
+    transform-origin: 50% 100%;
+    animation: mv-feast-monkey 3s ease-in-out both;
+}
+.mv-feast__face {
+    position: absolute;
+    inset: 0;
+}
+.mv-feast__face_hungry { animation: mv-feast-hide 3s step-end both; }
+.mv-feast__face_happy { animation: mv-feast-show 3s step-end both; }
+@keyframes mv-feast-hide { 0% { opacity: 1; } 55% { opacity: 0; } }
+@keyframes mv-feast-show { 0% { opacity: 0; } 55% { opacity: 1; } }
+/* жуёт, потом подпрыгивает от радости */
+@keyframes mv-feast-monkey {
+    0%, 22% { transform: none; }
+    27%, 37%, 47% { transform: scale(1.06, 0.92); }
+    32%, 42%, 52% { transform: scale(0.96, 1.05); }
+    56% { transform: none; }
+    62% { transform: translateY(-12px) rotate(-6deg); }
+    68% { transform: none; }
+    74% { transform: translateY(-8px) rotate(6deg); }
+    80%, 100% { transform: none; }
+}
+/* банан прилетает справа и съедается в три укуса */
+.mv-feast__banana {
+    position: absolute;
+    left: 34px;
+    bottom: 6px;
+    font-size: 24px;
+    animation: mv-feast-banana 3s ease-out both;
+}
+@keyframes mv-feast-banana {
+    0% { opacity: 0; transform: translate(40px, -18px) rotate(40deg); }
+    20% { opacity: 1; transform: translate(0, 0) rotate(-10deg); }
+    30% { transform: scale(0.8) rotate(-10deg); }
+    40% { transform: scale(0.55) rotate(-6deg); }
+    50% { opacity: 1; transform: scale(0.3) rotate(-4deg); }
+    55%, 100% { opacity: 0; transform: scale(0); }
+}
+.mv-feast__heart {
+    position: absolute;
+    bottom: 26px;
+    font-size: 14px;
+    opacity: 0;
+    animation: mv-feast-heart 3s ease-out both;
+}
+.mv-feast__heart_1 { left: 2px; }
+.mv-feast__heart_2 { left: 22px; animation-delay: 0.12s; }
+.mv-feast__heart_3 { left: 42px; animation-delay: 0.24s; }
+@keyframes mv-feast-heart {
+    0%, 56% { opacity: 0; transform: translateY(0) scale(0.6); }
+    64% { opacity: 1; transform: translateY(-6px) scale(1); }
+    90%, 100% { opacity: 0; transform: translateY(-26px) scale(0.9); }
+}
+.mv-feast__text {
+    display: grid;
+    justify-items: center;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.mv-feast__line {
+    grid-area: 1 / 1;
+}
+.mv-feast__line_eat { animation: mv-feast-hide 3s step-end both; }
+.mv-feast__line_happy { animation: mv-feast-show 3s step-end both; }
+
+@media (prefers-reduced-motion: reduce) {
+    .mv-hungry__monkey,
+    .mv-feast__monkey,
+    .mv-feast__banana,
+    .mv-feast__heart {
+        animation: none;
+    }
+    .mv-feast__banana { opacity: 0; }
+}
