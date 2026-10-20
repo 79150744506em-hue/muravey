@@ -39,7 +39,7 @@ import type {Backend} from './store';
 import {pickBackend} from './store';
 import type {LoginOptions} from './store';
 import {burst} from './confetti';
-import {TAG_THEMES, dayKey, effectiveList, sortKey, uid} from './types';
+import {TAG_THEMES, dayKey, effectiveList, hungryDays, sortKey, uid} from './types';
 import type {ListKind, Tag, TagTheme, Task} from './types';
 import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
@@ -117,6 +117,8 @@ export function App() {
     }, [tagFilter]);
     const [notice, setNotice] = React.useState<string | null>(null);
     const [completing, setCompleting] = React.useState<Set<string>>(new Set());
+    // номер последней кормёжки голодной обезьяны: новый номер перезапускает анимацию
+    const [feast, setFeast] = React.useState(0);
     const toaster = useToaster();
     // действие уже выполнено; в уведомлении можно его отменить
     const undoable = (title: string, undo: () => void) => {
@@ -164,8 +166,27 @@ export function App() {
         (id: string, p: Partial<Task>): Promise<void> => {
             const t = tasksRef.current.find((x) => x.id === id);
             if (!t || !backend) return Promise.resolve();
-            const pr = backend.saveTask({...t, ...p});
+            // перестановка внутри списка и сохранение без изменений — не действие, обезьяну не кормят
+            const acted = (Object.keys(p) as (keyof Task)[]).some(
+                (k) => k !== 'order' && JSON.stringify(t[k] ?? null) !== JSON.stringify(p[k] ?? null),
+            );
+            if (!acted) {
+                const pr = backend.saveTask({...t, ...p});
+                run(pr);
+                return pr;
+            }
+            const now = new Date().toISOString();
+            const pr = backend.saveTask({...t, ...p, touchedAt: now});
             run(pr);
+            let fed = hungryDays(t) !== null;
+            // правка подзадачи кормит и её фокусную задачу
+            for (const pid of new Set([t.parentId, p.parentId])) {
+                const parent = pid ? tasksRef.current.find((x) => x.id === pid) : undefined;
+                if (!parent) continue;
+                if (hungryDays(parent) !== null) fed = true;
+                run(backend.saveTask({...parent, touchedAt: now}));
+            }
+            if (fed) setFeast((n) => n + 1);
             return pr;
         },
         [backend, run],
@@ -366,6 +387,11 @@ export function App() {
     };
     const addChild = (parentId: string, title: string) => {
         if (!backend) return;
+        const parent = byId.get(parentId);
+        if (parent) {
+            if (hungryDays(parent) !== null) setFeast((n) => n + 1);
+            run(backend.saveTask({...parent, touchedAt: new Date().toISOString()}));
+        }
         run(
             backend.saveTask({
                 id: uid(),
@@ -421,6 +447,7 @@ export function App() {
 
     return (
         <div className={`mv-app${view === 'backlog' ? ' mv-app_wide' : ''}`}>
+            {feast > 0 && <MonkeyFeast key={feast} onEnd={() => setFeast(0)} />}
             <header className="mv-header">
                 <div className="mv-brand">
                     <img src={logo} alt="" className="mv-mark" />
@@ -1128,6 +1155,41 @@ function TaskPicker({
     );
 }
 
+function daysWord(n: number) {
+    const a = n % 10;
+    const b = n % 100;
+    if (a === 1 && b !== 11) return 'день';
+    if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return 'дня';
+    return 'дней';
+}
+
+/** Обезьяну покормили: она съедает банан и радуется */
+function MonkeyFeast({onEnd}: {onEnd: () => void}) {
+    React.useEffect(() => {
+        const id = window.setTimeout(onEnd, 3000);
+        return () => window.clearTimeout(id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+        <div className="mv-feast" role="status" aria-live="polite">
+            <div className="mv-feast__stage" aria-hidden="true">
+                <span className="mv-feast__monkey">
+                    <span className="mv-feast__face mv-feast__face_hungry">🐒</span>
+                    <span className="mv-feast__face mv-feast__face_happy">🐵</span>
+                </span>
+                <span className="mv-feast__banana">🍌</span>
+                <span className="mv-feast__heart mv-feast__heart_1">💛</span>
+                <span className="mv-feast__heart mv-feast__heart_2">✨</span>
+                <span className="mv-feast__heart mv-feast__heart_3">💛</span>
+            </div>
+            <div className="mv-feast__text">
+                <span className="mv-feast__line mv-feast__line_eat">Ням-ням…</span>
+                <span className="mv-feast__line mv-feast__line_happy">Обезьяна сыта и довольна!</span>
+            </div>
+        </div>
+    );
+}
+
 function TaskRow({
     task,
     list,
@@ -1153,6 +1215,7 @@ function TaskRow({
     onOpenParent?: (id: string) => void;
 } & RowActions) {
     const drag = useSortableRow(task.id, sortable);
+    const hungry = hungryDays(task);
     const menu = [
         // в бэклоге для этого есть солнышко прямо на строке
         ...(list === 'focus' ? [{text: 'На сегодня', iconStart: <Icon data={Sun} size={16} />, action: a.onPlan}] : []),
@@ -1176,7 +1239,7 @@ function TaskRow({
             {...drag.props}
             className={`mv-row${completing ? ' mv-row_completing' : ''}${task.done ? ' mv-row_done' : ''}${
                 sortable ? ' mv-row_sortable' : ''
-            }${drag.isDragging ? ' mv-row_dragging' : ''}`}
+            }${drag.isDragging ? ' mv-row_dragging' : ''}${hungry !== null ? ' mv-row_hungry' : ''}`}
             onClick={() => {
                 if (!drag.consumeDrag()) onOpen();
             }}
@@ -1190,6 +1253,17 @@ function TaskRow({
             <div className="mv-row__main">
                 <span className="mv-row__title">{task.title}</span>
                 <span className="mv-row__meta">
+                    {hungry !== null && (
+                        <span
+                            className="mv-hungry"
+                            title={`С задачей ничего не происходит ${hungry} ${daysWord(hungry)}. Покормите обезьяну: сделайте шаг по задаче — комментарий, правку описания, перенос.`}
+                        >
+                            <span className="mv-hungry__monkey" aria-hidden="true">
+                                🐒
+                            </span>
+                            Покорми меня
+                        </span>
+                    )}
                     {parent && (
                         <button
                             type="button"

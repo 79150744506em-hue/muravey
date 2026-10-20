@@ -22,6 +22,7 @@ export interface Task {
     createdAt: string;
     order?: number | null; // ручная сортировка внутри списка
     parentId?: string | null; // фокусная задача, для которой эта — подзадача
+    touchedAt?: string | null; // последнее действие с задачей — им кормится обезьяна
 }
 
 export interface Tag {
@@ -53,4 +54,20 @@ export function sortKey(t: Task, list: ListKind): number {
     if (t.order != null && t.list === list) return t.order;
     if (list === 'backlog') return -Date.parse(t.createdAt); // новые сверху
     return 1e13 + Date.parse((list === 'today' && t.plannedAt) || t.createdAt); // новые снизу
+}
+
+const HUNGRY_DAYS = 7;
+const DAY_MS = 864e5;
+
+/** Когда с задачей что-то делали в последний раз (у старых задач — по тому, что известно). */
+export function lastTouch(t: Task): number {
+    const marks = [t.touchedAt, t.createdAt, t.plannedAt, ...t.comments.map((c) => c.at)];
+    return Math.max(...marks.map((m) => (m ? Date.parse(m) : 0)).filter((x) => !Number.isNaN(x)));
+}
+
+/** Обезьяна голодна: с открытой задачей неделю ничего не происходило. Возвращает, сколько дней. */
+export function hungryDays(t: Task, now = Date.now()): number | null {
+    if (t.done) return null;
+    const days = Math.floor((now - lastTouch(t)) / DAY_MS);
+    return days >= HUNGRY_DAYS ? days : null;
 }
