@@ -13,7 +13,7 @@ import {
     Text,
     TextInput,
 } from '@gravity-ui/uikit';
-import {ArrowLeft, Flag, Gear, Globe, LinkSlash, Lock, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
+import {ArrowDownToLine, ArrowLeft, Flag, Gear, Globe, LinkSlash, Lock, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
 
 import type {Milestone, Roadmap, RoadmapScale, Task} from './types';
 import {dayKey, uid} from './types';
@@ -22,6 +22,7 @@ import {DescriptionEditor} from './DescriptionEditor';
 import {SaveStatus, useAutosave} from './SaveStatus';
 import MarkdownIt from 'markdown-it';
 import ins from 'markdown-it-ins';
+import {exportRoadmap} from './exportXlsx';
 import logo from './assets/logo.png';
 
 /* ---------- даты: считаем в днях от 1970-01-01 (UTC), чтобы не мешали часовые пояса ---------- */
@@ -631,6 +632,14 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         items={[
                             {text: 'Настройки', iconStart: <Icon data={Gear} size={16} />, action: () => setSettings(true)},
                             {
+                                text: 'Скачать в Excel',
+                                iconStart: <Icon data={ArrowDownToLine} size={16} />,
+                                action: () =>
+                                    void exportRoadmap(map, `${SCALE_NAMES[map.scale]} · ${periodText(map)}`, (m) =>
+                                        linked(m.id),
+                                    ),
+                            },
+                            {
                                 text: 'Удалить карту',
                                 theme: 'danger',
                                 iconStart: <Icon data={TrashBin} size={16} />,
@@ -1159,6 +1168,19 @@ export function SharedRoadmap({id}: {id: string}) {
                         )}
                     </div>
                 </div>
+                {state.kind === 'ready' && state.map && (
+                    <Button
+                        view="outlined"
+                        size="m"
+                        onClick={() => {
+                            const map = state.map!;
+                            void exportRoadmap(map, `${SCALE_NAMES[map.scale]} · ${periodText(map)}`);
+                        }}
+                    >
+                        <Icon data={ArrowDownToLine} size={16} />
+                        Скачать .xlsx
+                    </Button>
+                )}
             </header>
             <main className="mv-main">
                 {state.kind === 'loading' ? (
