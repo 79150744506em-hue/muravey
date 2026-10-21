@@ -1401,3 +1401,327 @@ body {
     }
     .mv-feast__banana { opacity: 0; }
 }
+
+/* ---------- дорожные карты ---------- */
+.mv-map-new {
+    align-self: flex-start;
+}
+.mv-maps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--g-spacing-3);
+}
+.mv-map-card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid var(--g-color-line-generic);
+    border-radius: var(--g-border-radius-l, 10px);
+    background: var(--g-color-base-float);
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.mv-map-card:hover {
+    border-color: var(--g-color-line-generic-active);
+    background: var(--g-color-base-simple-hover);
+}
+.mv-map-card__title {
+    font-weight: 600;
+    padding-inline-end: 20px;
+    overflow-wrap: anywhere;
+}
+.mv-map-card__shared {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    color: var(--g-color-text-info);
+}
+.mv-map {
+    display: flex;
+    flex-direction: column;
+    gap: var(--g-spacing-3);
+    min-width: 0;
+}
+.mv-map__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--g-spacing-2);
+    flex-wrap: wrap;
+}
+.mv-map__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--g-spacing-2);
+    flex-wrap: wrap;
+}
+.mv-map__title.g-text-input .g-text-input__control {
+    height: auto;
+    line-height: 28px;
+    font-size: var(--g-text-header-1-font-size, 20px);
+    font-weight: 600;
+}
+
+/* окно новой карты */
+.mv-period {
+    display: flex;
+    flex-direction: column;
+    gap: var(--g-spacing-4);
+}
+.mv-period__row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--g-spacing-2);
+}
+.mv-period__range {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: var(--g-spacing-2) var(--g-spacing-3);
+}
+.mv-period__pick {
+    display: flex;
+    align-items: center;
+    gap: var(--g-spacing-2);
+}
+
+/* гант */
+.mv-gantt {
+    --mv-gantt-label: 220px;
+    --mv-gantt-bar: var(--g-color-base-info-medium, rgba(54, 151, 241, 0.3));
+    --mv-gantt-bar-line: var(--g-color-line-info, #3697f1);
+    overflow-x: auto;
+    border: 1px solid var(--g-color-line-generic);
+    border-radius: var(--g-border-radius-l, 10px);
+    background: var(--g-color-base-background);
+}
+.mv-gantt__inner {
+    position: relative;
+}
+.mv-gantt__head,
+.mv-gantt__row {
+    display: flex;
+}
+.mv-gantt__head {
+    border-bottom: 1px solid var(--g-color-line-generic);
+}
+.mv-gantt__label {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    flex: 0 0 var(--mv-gantt-label);
+    width: var(--mv-gantt-label);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 12px;
+    border: 0;
+    border-right: 1px solid var(--g-color-line-generic);
+    background: var(--g-color-base-background);
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    min-width: 0;
+}
+button.mv-gantt__label:not(:disabled) {
+    cursor: pointer;
+}
+button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
+    text-decoration: underline;
+}
+.mv-gantt__label_head {
+    justify-content: flex-end;
+}
+.mv-gantt__name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mv-gantt__meta {
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    color: var(--g-color-text-secondary);
+}
+.mv-gantt__scale {
+    position: relative;
+    height: 52px;
+    flex-shrink: 0;
+}
+.mv-gantt__years,
+.mv-gantt__cells {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 26px;
+}
+.mv-gantt__years {
+    top: 0;
+}
+.mv-gantt__cells {
+    top: 26px;
+}
+.mv-gantt__year,
+.mv-gantt__cell {
+    position: absolute;
+    top: 0;
+    height: 26px;
+    box-sizing: border-box;
+    padding-inline: 8px;
+    line-height: 26px;
+    overflow: hidden;
+    white-space: nowrap;
+    border-left: 1px solid var(--g-color-line-generic);
+}
+.mv-gantt__year {
+    font-weight: 600;
+}
+.mv-gantt__cell {
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    color: var(--g-color-text-secondary);
+}
+.mv-gantt__body {
+    position: relative;
+    min-height: 120px;
+}
+.mv-gantt__grid {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+.mv-gantt__line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid var(--g-color-line-generic);
+    opacity: 0.6;
+}
+.mv-gantt__line_year {
+    border-left-color: var(--g-color-line-generic-active);
+    opacity: 1;
+}
+.mv-gantt__today {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left: 2px solid var(--g-color-line-danger, #e9033a);
+}
+.mv-gantt__empty {
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    padding: var(--g-spacing-8) var(--g-spacing-4);
+}
+.mv-gantt__row {
+    min-height: 52px;
+    border-bottom: 1px solid var(--g-color-line-generic);
+}
+.mv-gantt__row:last-child {
+    border-bottom: 0;
+}
+.mv-gantt__track {
+    position: relative;
+    flex-shrink: 0;
+}
+.mv-gantt__bar {
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    min-height: 30px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--mv-gantt-bar-line);
+    border-radius: 8px;
+    background: var(--mv-gantt-bar);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    overflow: hidden;
+}
+.mv-gantt__bar_drag {
+    cursor: grabbing;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+    z-index: 1;
+}
+.mv-gantt__bar_ro {
+    cursor: default;
+}
+.mv-gantt__dates {
+    flex: 1;
+    min-width: 0;
+    padding-inline: 10px;
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+.mv-gantt__handle {
+    flex: 0 0 8px;
+    align-self: stretch;
+    cursor: ew-resize;
+    touch-action: none;
+}
+.mv-gantt__handle:hover,
+.mv-gantt__bar_drag .mv-gantt__handle {
+    background: var(--mv-gantt-bar-line);
+    opacity: 0.5;
+}
+@media (max-width: 640px) {
+    .mv-gantt {
+        --mv-gantt-label: 130px;
+    }
+}
+
+/* окно вехи */
+.mv-dates {
+    display: flex;
+    gap: var(--g-spacing-3);
+    flex-wrap: wrap;
+}
+.mv-date-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.mv-date-field input {
+    height: 32px;
+    padding-inline: 8px;
+    border: 1px solid var(--g-color-line-generic);
+    border-radius: var(--g-border-radius-m, 8px);
+    background: var(--g-color-base-background);
+    color: var(--g-color-text-primary);
+    font: inherit;
+    color-scheme: light dark;
+}
+.mv-date-field input:focus {
+    outline: none;
+    border-color: var(--g-color-line-generic-active);
+}
+.mv-parent-card_milestone {
+    background: var(--g-color-base-info-light, rgba(54, 151, 241, 0.12));
+}
+.mv-parent-card_milestone .mv-parent-card__icon {
+    color: var(--g-color-text-info);
+}
+.mv-share {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--g-spacing-3);
+}
+.mv-share > .g-text-input {
+    align-self: stretch;
+}

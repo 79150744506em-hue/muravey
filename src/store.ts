@@ -1,14 +1,24 @@
-import type {Tag, Task} from './types';
+import type {Roadmap, Tag, Task} from './types';
 
 export interface Backend {
     kind: 'cloud' | 'local' | 'server';
-    subscribe(onTasks: (t: Task[]) => void, onTags: (t: Tag[]) => void, onError: (msg: string) => void): () => void;
+    subscribe(
+        onTasks: (t: Task[]) => void,
+        onTags: (t: Tag[]) => void,
+        onError: (msg: string) => void,
+        onRoadmaps: (r: Roadmap[]) => void,
+    ): () => void;
     saveTask(t: Task): Promise<void>;
     removeTask(id: string): Promise<void>;
     saveTag(t: Tag): Promise<void>;
     removeTag(id: string): Promise<void>;
-    /** Слить задачи и теги из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
-    importAll(tasks: Task[], tags: Tag[]): Promise<void>;
+    saveRoadmap(r: Roadmap): Promise<void>;
+    removeRoadmap(id: string): Promise<void>;
+    /** включить и выключить публичную ссылку (есть только у своего сервера) */
+    shareRoadmap?(id: string): Promise<void>;
+    unshareRoadmap?(id: string): Promise<void>;
+    /** Слить задачи, теги и дорожные карты из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
+    importAll(tasks: Task[], tags: Tag[], roadmaps: Roadmap[]): Promise<void>;
     /** выйти из аккаунта (есть только там, где есть вход) */
     signOut?(): Promise<void>;
 }
@@ -22,6 +32,7 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
     const root = db.doc(`data/users/${userId}/muravey`);
     const tasksCol = root.collection('tasks');
     const tagsCol = root.collection('tags');
+    const mapsCol = root.collection('roadmaps');
 
     // одна запись за раз на документ
     const chains = new Map<string, Promise<void>>();
@@ -37,22 +48,27 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
 
     return {
         kind: 'cloud',
-        subscribe(onTasks, onTags, onError) {
+        subscribe(onTasks, onTags, onError, onRoadmaps) {
             const err = (e: {code?: string}) => onError(errorText(e?.code));
             const u1 = tasksCol.onSnapshot((s: any) => onTasks(s.docs.map((d: any) => d.data() as Task)), err);
             const u2 = tagsCol.onSnapshot((s: any) => onTags(s.docs.map((d: any) => d.data() as Tag)), err);
+            const u3 = mapsCol.onSnapshot((s: any) => onRoadmaps(s.docs.map((d: any) => d.data() as Roadmap)), err);
             return () => {
                 u1();
                 u2();
+                u3();
             };
         },
         saveTask: (t) => queue('t:' + t.id, () => tasksCol.doc(t.id).set({...t})),
         removeTask: (id) => queue('t:' + id, () => tasksCol.doc(id).delete()),
         saveTag: (t) => queue('g:' + t.id, () => tagsCol.doc(t.id).set({...t})),
         removeTag: (id) => queue('g:' + id, () => tagsCol.doc(id).delete()),
-        async importAll(tasks, tags) {
+        saveRoadmap: (r) => queue('r:' + r.id, () => mapsCol.doc(r.id).set({...r})),
+        removeRoadmap: (id) => queue('r:' + id, () => mapsCol.doc(id).delete()),
+        async importAll(tasks, tags, roadmaps) {
             for (const t of tags) await queue('g:' + t.id, () => tagsCol.doc(t.id).set({...t}));
             for (const t of tasks) await queue('t:' + t.id, () => tasksCol.doc(t.id).set({...t}));
+            for (const r of roadmaps) await queue('r:' + r.id, () => mapsCol.doc(r.id).set({...r}));
         },
     };
 }
@@ -95,14 +111,14 @@ function errorText(code?: string) {
 const LS_KEY = 'muravey:v1';
 
 function localBackend(): Backend {
-    let state: {tasks: Task[]; tags: Tag[]} = {tasks: [], tags: []};
+    let state: {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]} = {tasks: [], tags: [], roadmaps: []};
     try {
         const raw = localStorage.getItem(LS_KEY);
-        if (raw) state = JSON.parse(raw);
+        if (raw) state = {...state, ...JSON.parse(raw)};
     } catch {
         /* хранилище недоступно */
     }
-    const subs = new Set<{onTasks: (t: Task[]) => void; onTags: (t: Tag[]) => void}>();
+    const subs = new Set<{onTasks: (t: Task[]) => void; onTags: (t: Tag[]) => void; onRoadmaps: (r: Roadmap[]) => void}>();
     const commit = async () => {
         try {
             localStorage.setItem(LS_KEY, JSON.stringify(state));
@@ -112,6 +128,7 @@ function localBackend(): Backend {
         subs.forEach((s) => {
             s.onTasks(state.tasks);
             s.onTags(state.tags);
+            s.onRoadmaps(state.roadmaps);
         });
     };
     const upsert = <T extends {id: string}>(arr: T[], item: T) => {
@@ -120,11 +137,12 @@ function localBackend(): Backend {
     };
     return {
         kind: 'local',
-        subscribe(onTasks, onTags) {
-            const s = {onTasks, onTags};
+        subscribe(onTasks, onTags, _onError, onRoadmaps) {
+            const s = {onTasks, onTags, onRoadmaps};
             subs.add(s);
             onTasks(state.tasks);
             onTags(state.tags);
+            onRoadmaps(state.roadmaps);
             return () => subs.delete(s);
         },
         async saveTask(t) {
@@ -143,8 +161,20 @@ function localBackend(): Backend {
             state = {...state, tags: state.tags.filter((x) => x.id !== id)};
             await commit();
         },
-        async importAll(tasks, tags) {
-            state = {tasks: tasks.reduce(upsert, state.tasks), tags: tags.reduce(upsert, state.tags)};
+        async saveRoadmap(r) {
+            state = {...state, roadmaps: upsert(state.roadmaps, r)};
+            await commit();
+        },
+        async removeRoadmap(id) {
+            state = {...state, roadmaps: state.roadmaps.filter((x) => x.id !== id)};
+            await commit();
+        },
+        async importAll(tasks, tags, roadmaps) {
+            state = {
+                tasks: tasks.reduce(upsert, state.tasks),
+                tags: tags.reduce(upsert, state.tags),
+                roadmaps: roadmaps.reduce(upsert, state.roadmaps),
+            };
             await commit();
         },
     };
@@ -186,15 +216,22 @@ const forget = () => {
 
 function serverBackend(initialToken: string): Backend {
     let token = initialToken;
-    type State = {tasks: Task[]; tags: Tag[]};
-    let state: State = {tasks: [], tags: []};
+    type State = {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]};
+    // сервер до дорожных карт присылал только задачи и теги
+    const full = (s: Partial<State>): State => ({tasks: [], tags: [], roadmaps: [], ...s});
+    let state: State = full({});
     try {
         const raw = localStorage.getItem(CACHE_KEY);
-        if (raw) state = JSON.parse(raw);
+        if (raw) state = full(JSON.parse(raw));
     } catch {
         /* без кэша */
     }
-    const subs = new Set<{onTasks: (t: Task[]) => void; onTags: (t: Tag[]) => void; onError: (m: string) => void}>();
+    const subs = new Set<{
+        onTasks: (t: Task[]) => void;
+        onTags: (t: Tag[]) => void;
+        onError: (m: string) => void;
+        onRoadmaps: (r: Roadmap[]) => void;
+    }>();
     const emit = () => {
         try {
             localStorage.setItem(CACHE_KEY, JSON.stringify(state));
@@ -204,6 +241,7 @@ function serverBackend(initialToken: string): Backend {
         subs.forEach((s) => {
             s.onTasks(state.tasks);
             s.onTags(state.tags);
+            s.onRoadmaps(state.roadmaps);
         });
     };
     const fail = (e: {status?: number}) => {
@@ -224,7 +262,7 @@ function serverBackend(initialToken: string): Backend {
         pending++;
         const p = chain.then(async () => {
             try {
-                const next = (await api(body, token)) as State;
+                const next = full(await api(body, token));
                 if (pending === 1) {
                     state = next;
                     emit();
@@ -250,7 +288,7 @@ function serverBackend(initialToken: string): Backend {
                 saveToken(fresh);
             }
             if (!pending) {
-                state = next;
+                state = full(next);
                 emit();
             }
         } catch (e) {
@@ -265,11 +303,12 @@ function serverBackend(initialToken: string): Backend {
 
     return {
         kind: 'server',
-        subscribe(onTasks, onTags, onError) {
-            const s = {onTasks, onTags, onError};
+        subscribe(onTasks, onTags, onError, onRoadmaps) {
+            const s = {onTasks, onTags, onError, onRoadmaps};
             subs.add(s);
             onTasks(state.tasks);
             onTags(state.tags);
+            onRoadmaps(state.roadmaps);
             refresh();
             const id = window.setInterval(refresh, POLL_MS);
             const onVis = () => document.visibilityState === 'visible' && refresh();
@@ -287,8 +326,22 @@ function serverBackend(initialToken: string): Backend {
             send({action: 'removeTask', id}, (s) => ({...s, tasks: s.tasks.filter((x) => x.id !== id)})),
         saveTag: (t) => send({action: 'saveTag', item: t}, (s) => ({...s, tags: upsert(s.tags, t)})),
         removeTag: (id) => send({action: 'removeTag', id}, (s) => ({...s, tags: s.tags.filter((x) => x.id !== id)})),
-        importAll: (tasks, tags) =>
-            send({action: 'import', tasks, tags}, (s) => ({tasks: tasks.reduce(upsert, s.tasks), tags: tags.reduce(upsert, s.tags)})),
+        saveRoadmap: (r) => send({action: 'saveRoadmap', item: r}, (s) => ({...s, roadmaps: upsert(s.roadmaps, r)})),
+        removeRoadmap: (id) =>
+            send({action: 'removeRoadmap', id}, (s) => ({...s, roadmaps: s.roadmaps.filter((x) => x.id !== id)})),
+        // ключ ссылки придумывает сервер, поэтому здесь ничего не меняем заранее
+        shareRoadmap: (id) => send({action: 'shareRoadmap', id}, (s) => s),
+        unshareRoadmap: (id) =>
+            send({action: 'unshareRoadmap', id}, (s) => ({
+                ...s,
+                roadmaps: s.roadmaps.map((r) => (r.id === id ? {...r, shareId: null} : r)),
+            })),
+        importAll: (tasks, tags, roadmaps) =>
+            send({action: 'import', tasks, tags, roadmaps}, (s) => ({
+                tasks: tasks.reduce(upsert, s.tasks),
+                tags: tags.reduce(upsert, s.tags),
+                roadmaps: roadmaps.reduce(upsert, s.roadmaps),
+            })),
         async signOut() {
             forget();
             window.location.reload();
@@ -395,6 +448,16 @@ async function findServer(): Promise<{google?: string} | null> {
         return data?.ok === true ? {google: data.google} : null;
     } catch {
         return null;
+    }
+}
+
+/** Дорожная карта по публичной ссылке: только название, масштаб, период и вехи. null — ссылку выключили или её нет. */
+export async function loadSharedRoadmap(id: string): Promise<Pick<Roadmap, 'title' | 'scale' | 'from' | 'to' | 'milestones'> | null> {
+    try {
+        return (await api({action: 'sharedRoadmap', id})).roadmap;
+    } catch (e) {
+        if ((e as {status?: number}).status === 404) return null;
+        throw e;
     }
 }
 

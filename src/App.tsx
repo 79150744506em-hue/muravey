@@ -20,7 +20,9 @@ import {
 } from '@gravity-ui/uikit';
 import {
     ArrowUturnCcwLeft,
+    BarsUnaligned,
     CircleCheck,
+    Flag,
     Link,
     LinkSlash,
     Grip,
@@ -40,14 +42,15 @@ import {pickBackend} from './store';
 import type {LoginOptions} from './store';
 import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
-import type {ListKind, Tag, TagTheme, Task} from './types';
+import type {ListKind, Milestone, Roadmap, Tag, TagTheme, Task} from './types';
 import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
+import {RoadmapsView, datesText} from './Roadmaps';
 import {SortableList, useSortableRow} from './SortableList';
 import logo from './assets/logo.png';
 
-type View = ListKind | 'done';
+type View = ListKind | 'done' | 'roadmap';
 
 const LIST_NAMES: Record<ListKind, string> = {today: 'Сегодня', focus: 'Фокус', backlog: 'Бэклог'};
 const THEME_NAMES: Record<TagTheme, string> = {
@@ -90,10 +93,17 @@ export function App() {
     const [tasks, setTasks] = React.useState<Task[] | null>(null);
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
+    // в адресе: #today, #roadmap или #roadmap/<id карты>
     const [view, setView] = React.useState<View>(() => {
-        const h = window.location.hash.slice(1);
-        return (['today', 'focus', 'backlog', 'done'] as View[]).includes(h as View) ? (h as View) : 'today';
+        const h = window.location.hash.slice(1).split('/')[0];
+        return (['today', 'focus', 'backlog', 'done', 'roadmap'] as View[]).includes(h as View) ? (h as View) : 'today';
     });
+    const [roadmaps, setRoadmaps] = React.useState<Roadmap[] | null>(null);
+    const [mapId, setMapId] = React.useState<string | null>(() => {
+        const [h, id] = window.location.hash.slice(1).split('/');
+        return h === 'roadmap' && id ? id : null;
+    });
+    const [milestoneId, setMilestoneId] = React.useState<string | null>(null);
     const [openId, setOpenId] = React.useState<string | null>(null);
     // новая задача: черновик живёт только в окне, в хранилище попадает, как только появится название
     const [draft, setDraft] = React.useState<Task | null>(null);
@@ -145,7 +155,7 @@ export function App() {
             if (!alive) return;
             setLogin(null);
             setBackend(b);
-            unsub = b.subscribe(setTasks, setTags, setError);
+            unsub = b.subscribe(setTasks, setTags, setError, setRoadmaps);
         };
         pickBackend().then((r) => {
             if (!alive) return;
@@ -328,14 +338,25 @@ export function App() {
         }
     };
 
-    const switchView = (v: string) => {
+    const switchView = (v: string, map: string | null = null) => {
         setView(v as View);
+        setMapId(map);
+        setMilestoneId(null);
         try {
-            history.replaceState(null, '', '#' + v);
+            history.replaceState(null, '', '#' + v + (map ? '/' + map : ''));
         } catch {
             /* без адресной строки */
         }
     };
+
+    const removeRoadmap = (r: Roadmap) => {
+        if (!backend) return;
+        run(backend.removeRoadmap(r.id));
+        undoable(`Дорожная карта «${r.title}» удалена`, () => run(backend.saveRoadmap(r)));
+    };
+    // все вехи для поля «Веха» в карточке задачи
+    const milestones = (roadmaps ?? []).flatMap((map) => map.milestones.map((m) => ({map, m})));
+    const milestoneOf = (t: Task) => (t.milestoneId ? milestones.find((x) => x.m.id === t.milestoneId) : undefined);
 
     const all = tasks ?? [];
     // фильтр по тегам: задача видна, если у неё есть хотя бы один из выбранных тегов
@@ -356,7 +377,7 @@ export function App() {
         backlog: byList('backlog').sort((a, b) => sortKey(a, 'backlog') - sortKey(b, 'backlog')),
         done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
     };
-    const shown = lists[view];
+    const shown = view === 'roadmap' ? [] : lists[view];
     // на сегодня пусто (и фильтр ничего не прячет) — показываем большой экран «Спланировать день»
     const emptyDay = view === 'today' && tasks !== null && lists.today.length === 0 && !filtering;
     const tagMap = new Map(tags.map((t) => [t.id, t]));
@@ -435,7 +456,7 @@ export function App() {
     if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
     return (
-        <div className={`mv-app${view === 'backlog' ? ' mv-app_wide' : ''}`}>
+        <div className={`mv-app${view === 'backlog' || view === 'roadmap' ? ' mv-app_wide' : ''}`}>
             {feast > 0 && <MonkeyFeast key={feast} onEnd={() => setFeast(0)} />}
             <header className="mv-header">
                 <div className="mv-brand">
@@ -459,12 +480,13 @@ export function App() {
                         backend={backend}
                         tasks={all}
                         tags={tags}
+                        roadmaps={roadmaps ?? []}
                         onResult={(r) => (r.ok ? setNotice(r.message) : setError(r.message))}
                     />
                 </div>
             </header>
 
-            <TabList value={view} onUpdate={switchView} size="l" contentOverflow="scroll" className="mv-tabs">
+            <TabList value={view} onUpdate={(v) => switchView(v)} size="l" contentOverflow="scroll" className="mv-tabs">
                 <Tab value="today" icon={<Icon data={Sun} size={16} />} counter={lists.today.length}>
                     Сегодня
                 </Tab>
@@ -477,9 +499,12 @@ export function App() {
                 <Tab value="done" icon={<Icon data={CircleCheck} size={16} />}>
                     Выполненные
                 </Tab>
+                <Tab value="roadmap" icon={<Icon data={BarsUnaligned} size={16} />}>
+                    Roadmap
+                </Tab>
             </TabList>
 
-            {tags.length > 0 && (
+            {tags.length > 0 && view !== 'roadmap' && (
                 <TagFilter tags={sortedTags} value={activeFilter} onChange={setTagFilter} />
             )}
 
@@ -518,7 +543,32 @@ export function App() {
                     </div>
                 )}
 
-                {view === 'backlog' && tasks !== null ? (
+                {view === 'roadmap' ? (
+                    <RoadmapsView
+                        roadmaps={roadmaps}
+                        tasks={all}
+                        mapId={mapId}
+                        onOpenMap={(id) => switchView('roadmap', id)}
+                        milestoneId={milestoneId}
+                        onOpenMilestone={setMilestoneId}
+                        canShare={Boolean(backend?.shareRoadmap)}
+                        disabled={!backend}
+                        onSave={(r) => backend && run(backend.saveRoadmap(r))}
+                        onRemove={removeRoadmap}
+                        onShare={(id) => backend?.shareRoadmap && run(backend.shareRoadmap(id))}
+                        onUnshare={(id) => backend?.unshareRoadmap && run(backend.unshareRoadmap(id))}
+                        onOpenTask={(id) => {
+                            setMilestoneId(null);
+                            setDraft(null);
+                            setOpenId(id);
+                        }}
+                        onLinkTask={(id, m) => patch(id, {milestoneId: m})}
+                        onToggleTask={(c) =>
+                            patch(c.id, c.done ? {done: false, doneAt: null} : {done: true, doneAt: new Date().toISOString()})
+                        }
+                        undoable={undoable}
+                    />
+                ) : view === 'backlog' && tasks !== null ? (
                     <BacklogBoard
                         backlog={lists.backlog}
                         today={lists.today}
@@ -617,6 +667,13 @@ export function App() {
                             patch(c.id, c.done ? {done: false, doneAt: null} : {done: true, doneAt: new Date().toISOString()})
                         }
                         onAddChild={(title) => addChild(cardTask.id, title)}
+                        milestones={milestones}
+                        milestone={milestoneOf(cardTask)}
+                        onOpenMilestone={(mapId, id) => {
+                            closeCard();
+                            switchView('roadmap', mapId);
+                            setMilestoneId(id);
+                        }}
                         parentProgress={(() => {
                             const p = parentOf(cardTask);
                             return p ? progressOf(p) : undefined;
@@ -1024,8 +1081,8 @@ function PlanHero({hasBacklog, disabled, onPlan}: {hasBacklog: boolean; disabled
     );
 }
 
-function EmptyState({view, hasBacklog}: {view: View; hasBacklog: boolean}) {
-    const text: Record<View, string> = {
+function EmptyState({view, hasBacklog}: {view: Exclude<View, 'roadmap'>; hasBacklog: boolean}) {
+    const text: Record<Exclude<View, 'roadmap'>, string> = {
         today: hasBacklog
             ? 'На сегодня пока ничего. Возьмите задачи из бэклога.'
             : 'На сегодня пока ничего. Добавьте задачи в бэклог, а потом запланируйте их сюда.',
@@ -1346,6 +1403,9 @@ function TaskDetails({
     onToggleChild,
     onAddChild,
     parentProgress,
+    milestones,
+    milestone,
+    onOpenMilestone,
     ...a
 }: {
     task: Task;
@@ -1372,6 +1432,10 @@ function TaskDetails({
     onToggleChild: (t: Task) => void;
     onAddChild: (title: string) => void;
     parentProgress?: {done: number; total: number};
+    /** все вехи всех дорожных карт — к любой можно привязать задачу */
+    milestones: {map: Roadmap; m: Milestone}[];
+    milestone?: {map: Roadmap; m: Milestone};
+    onOpenMilestone: (mapId: string, id: string) => void;
 } & Omit<RowActions, 'onComplete'>) {
     const [childTitle, setChildTitle] = React.useState('');
     const [title, setTitle] = React.useState(task.title);
@@ -1573,6 +1637,59 @@ function TaskDetails({
                             tasks={focusTasks}
                             onPick={(id) => save({parentId: id})}
                         />
+                    )}
+                </section>
+            )}
+
+            {(milestones.length > 0 || milestone) && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Веха</Text>
+                    {milestone ? (
+                        <div className="mv-parent-card mv-parent-card_milestone">
+                            <button
+                                type="button"
+                                className="mv-parent-card__main"
+                                onClick={() => onOpenMilestone(milestone.map.id, milestone.m.id)}
+                            >
+                                <span className="mv-parent-card__icon">
+                                    <Icon data={Flag} size={16} />
+                                </span>
+                                <span className="mv-parent-card__text">
+                                    <span className="mv-parent-card__title">{milestone.m.title}</span>
+                                    <Text variant="caption-2" color="secondary">
+                                        {milestone.map.title} · {datesText(milestone.m)}
+                                    </Text>
+                                </span>
+                            </button>
+                            <ActionTooltip title="Отвязать от вехи">
+                                <Button view="flat-secondary" size="m" onClick={() => save({milestoneId: null})} aria-label="Отвязать от вехи">
+                                    <Icon data={LinkSlash} size={16} />
+                                </Button>
+                            </ActionTooltip>
+                        </div>
+                    ) : (
+                        <div>
+                            <Select
+                                id="mv-task-milestone"
+                                value={[]}
+                                filterable={milestones.length > 7}
+                                filterPlaceholder="Найти веху"
+                                popupWidth={320}
+                                onUpdate={([v]) => v && save({milestoneId: v})}
+                                options={[...new Set(milestones.map((x) => x.map))].map((map) => ({
+                                    label: map.title,
+                                    options: milestones
+                                        .filter((x) => x.map === map)
+                                        .map((x) => ({value: x.m.id, content: x.m.title, text: x.m.title})),
+                                }))}
+                                renderControl={({ref, triggerProps}) => (
+                                    <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
+                                        <Icon data={Flag} size={16} />
+                                        Привязать к вехе
+                                    </Button>
+                                )}
+                            />
+                        </div>
                     )}
                 </section>
             )}

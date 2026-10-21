@@ -3,19 +3,20 @@ import {Button, Dialog, DropdownMenu, Icon} from '@gravity-ui/uikit';
 import {ArrowDownToLine, ArrowRightFromSquare, ArrowUpFromLine, Ellipsis} from '@gravity-ui/icons';
 
 import type {Backend} from './store';
-import type {Tag, Task} from './types';
+import type {Roadmap, Tag, Task} from './types';
 import {dayKey} from './types';
 
 interface Parsed {
     tasks: Task[];
     tags: Tag[];
+    roadmaps: Roadmap[];
     newTasks: number;
     newTags: number;
 }
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 
-function parseBackup(text: string): {tasks: Task[]; tags: Tag[]} {
+function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]} {
     let data: unknown;
     try {
         data = JSON.parse(text);
@@ -30,7 +31,13 @@ function parseBackup(text: string): {tasks: Task[]; tags: Tag[]} {
             isObj(t) && typeof t.id === 'string' && typeof t.title === 'string',
     );
     const tags = data.tags.filter((t): t is Tag => isObj(t) && typeof t.id === 'string' && typeof t.name === 'string');
-    if (tasks.length !== data.tasks.length || tags.length !== data.tags.length) {
+    // в копиях до дорожных карт их просто нет
+    const rawMaps = Array.isArray(data.roadmaps) ? data.roadmaps : [];
+    const roadmaps = rawMaps.filter(
+        (r): r is Roadmap =>
+            isObj(r) && typeof r.id === 'string' && typeof r.title === 'string' && Array.isArray(r.milestones),
+    );
+    if (tasks.length !== data.tasks.length || tags.length !== data.tags.length || roadmaps.length !== rawMaps.length) {
         throw new Error('Часть записей в файле повреждена, загрузка отменена.');
     }
     // старые копии могли быть без каких-то полей — достраиваем значения по умолчанию
@@ -46,18 +53,20 @@ function parseBackup(text: string): {tasks: Task[]; tags: Tag[]} {
         createdAt: new Date().toISOString(),
         ...t,
     }));
-    return {tasks: fixed, tags};
+    return {tasks: fixed, tags, roadmaps};
 }
 
 export function BackupMenu({
     backend,
     tasks,
     tags,
+    roadmaps,
     onResult,
 }: {
     backend: Backend | null;
     tasks: Task[];
     tags: Tag[];
+    roadmaps: Roadmap[];
     onResult: (r: {ok: boolean; message: string}) => void;
 }) {
     const fileRef = React.useRef<HTMLInputElement>(null);
@@ -65,7 +74,7 @@ export function BackupMenu({
     const [busy, setBusy] = React.useState(false);
 
     const download = () => {
-        const body = JSON.stringify({version: 1, exportedAt: new Date().toISOString(), tasks, tags}, null, 2);
+        const body = JSON.stringify({version: 1, exportedAt: new Date().toISOString(), tasks, tags, roadmaps}, null, 2);
         const url = URL.createObjectURL(new Blob([body], {type: 'application/json'}));
         const a = document.createElement('a');
         a.href = url;
@@ -95,10 +104,12 @@ export function BackupMenu({
         if (!pending || !backend) return;
         setBusy(true);
         try {
-            await backend.importAll(pending.tasks, pending.tags);
+            await backend.importAll(pending.tasks, pending.tags, pending.roadmaps);
             onResult({
                 ok: true,
-                message: `Загружено: задач ${pending.tasks.length}, тегов ${pending.tags.length}.`,
+                message:
+                    `Загружено: задач ${pending.tasks.length}, тегов ${pending.tags.length}` +
+                    (pending.roadmaps.length ? `, дорожных карт ${pending.roadmaps.length}.` : '.'),
             });
             setPending(null);
         } catch (e) {
@@ -157,7 +168,8 @@ export function BackupMenu({
                         <>
                             В файле задач: {pending.tasks.length} (новых {pending.newTasks}, обновятся{' '}
                             {pending.tasks.length - pending.newTasks}), тегов: {pending.tags.length} (новых{' '}
-                            {pending.newTags}, обновятся {pending.tags.length - pending.newTags}).
+                            {pending.newTags}, обновятся {pending.tags.length - pending.newTags})
+                            {pending.roadmaps.length > 0 && `, дорожных карт: ${pending.roadmaps.length}`}.
                             <br />
                             <br />
                             Задачи и теги с теми же id перезапишутся версией из файла. Всё остальное останется как есть,

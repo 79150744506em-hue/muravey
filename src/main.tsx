@@ -7,6 +7,7 @@ import {ThemeProvider, Toaster, ToasterComponent, ToasterProvider, configure} fr
 import type {Theme} from '@gravity-ui/uikit';
 import {configure as configureEditor} from '@gravity-ui/markdown-editor';
 import {App} from './App';
+import {SharedRoadmap} from './Roadmaps';
 import logo from './assets/logo.png';
 
 configure({lang: 'ru'});
@@ -26,6 +27,9 @@ function hostTheme(): Theme {
     return t === 'dark' || t === 'light' ? t : 'system';
 }
 
+// ссылка «посмотреть дорожную карту» открывается без входа
+const sharedId = new URLSearchParams(window.location.search).get('roadmap');
+
 function Root() {
     const [theme, setTheme] = React.useState<Theme>(hostTheme);
     React.useEffect(() => {
@@ -36,7 +40,7 @@ function Root() {
     return (
         <ThemeProvider theme={theme}>
             <ToasterProvider toaster={toaster}>
-                <App />
+                {sharedId ? <SharedRoadmap id={sharedId} /> : <App />}
                 <ToasterComponent />
             </ToasterProvider>
         </ThemeProvider>
