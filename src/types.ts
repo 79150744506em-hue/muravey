@@ -23,6 +23,7 @@ export interface Task {
     order?: number | null; // ручная сортировка внутри списка
     parentId?: string | null; // фокусная задача, для которой эта — подзадача
     touchedAt?: string | null; // последнее действие с задачей — им кормится обезьяна
+    milestoneId?: string | null; // веха дорожной карты, к которой привязана задача
 }
 
 export interface Tag {
@@ -30,6 +31,30 @@ export interface Tag {
     name: string;
     theme: TagTheme;
     createdAt: string;
+}
+
+export type RoadmapScale = 'months' | 'years';
+
+/** Веха дорожной карты: полоса на ганте от start до end включительно. */
+export interface Milestone {
+    id: string;
+    title: string;
+    start: string; // YYYY-MM-DD
+    end: string; // YYYY-MM-DD
+}
+
+/** Дорожная карта — отдельная от задач сущность: проект или продукт, разбитый на вехи. */
+export interface Roadmap {
+    id: string;
+    title: string;
+    scale: RoadmapScale;
+    /** период на ганте: с первого месяца по последний включительно, YYYY-MM */
+    from: string;
+    to: string;
+    milestones: Milestone[];
+    createdAt: string;
+    /** ключ публичной ссылки; выдаёт и отзывает сервер */
+    shareId?: string | null;
 }
 
 export const TAG_THEMES: TagTheme[] = ['info', 'success', 'warning', 'danger', 'utility', 'normal'];

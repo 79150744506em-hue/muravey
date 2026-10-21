@@ -1,7 +1,8 @@
 // Серверная часть Муравья: одна функция Yandex Cloud Functions за API-шлюзом.
 // Данные лежат в Object Storage:
 //   accounts/<sha256 почты>.json — аккаунт {id, email, pass?, google?}
-//   users/<id>/state.json        — задачи и теги пользователя {tasks: [], tags: []}
+//   users/<id>/state.json        — задачи, теги и дорожные карты пользователя {tasks: [], tags: [], roadmaps: []}
+//   shares/<ключ>.json           — публичная ссылка на дорожную карту {u: id пользователя, r: id карты}
 const crypto = require('node:crypto');
 
 const BUCKET = process.env.BUCKET;
@@ -79,9 +80,15 @@ async function writeJson(iam, key, value) {
     if (!res.ok) throw new Error(`storage write ${res.status}: ${await res.text()}`);
 }
 
+async function deleteKey(iam, key) {
+    const res = await fetch(`${STORAGE}/${BUCKET}/${key}`, {method: 'DELETE', headers: {'X-YaCloud-SubjectToken': iam}});
+    if (!res.ok && res.status !== 404) throw new Error(`storage delete ${res.status}: ${await res.text()}`);
+}
+
 const normEmail = (email) => String(email || '').trim().toLowerCase();
 const accountKey = (email) => `accounts/${crypto.createHash('sha256').update(email).digest('hex')}.json`;
 const stateKey = (uid) => `users/${uid}/state.json`;
+const shareKey = (id) => `shares/${id}.json`;
 
 /* ---------- вход через Google: проверяем id_token по открытым ключам Google ---------- */
 
@@ -127,6 +134,9 @@ const upsert = (arr, item) => {
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v) && typeof v.id === 'string';
 
+// ключ публичной ссылки выдаёт только сервер: из присланной карты его не берём
+const keepShare = (roadmaps, item) => ({...item, shareId: roadmaps.find((r) => r.id === item.id)?.shareId ?? null});
+
 async function handle(req, headers, iam) {
     if (req.action === 'ping') return {ok: true, google: GOOGLE_CLIENT_ID || undefined};
 
@@ -144,6 +154,25 @@ async function handle(req, headers, iam) {
         const account = await readJson(iam, accountKey(normEmail(req.email)));
         if (!account || !(await checkPassword(String(req.password || ''), account.pass))) throw fail(401, 'wrong_password');
         return {token: issueToken(account.id)};
+    }
+
+    // просмотр дорожной карты по публичной ссылке — без входа и только вехи
+    if (req.action === 'sharedRoadmap') {
+        const id = String(req.id || '');
+        if (!/^[\w-]{16,64}$/.test(id)) throw fail(404, 'not_found');
+        const link = await readJson(iam, shareKey(id));
+        const owner = link && (await readJson(iam, stateKey(link.u)));
+        const map = owner && (owner.roadmaps || []).find((r) => r.id === link.r && r.shareId === id);
+        if (!map) throw fail(404, 'not_found');
+        return {
+            roadmap: {
+                title: map.title,
+                scale: map.scale,
+                from: map.from,
+                to: map.to,
+                milestones: (map.milestones || []).map(({id, title, start, end}) => ({id, title, start, end})),
+            },
+        };
     }
 
     if (req.action === 'google') {
@@ -165,8 +194,13 @@ async function handle(req, headers, iam) {
     const uid = readToken(auth.replace(/^Bearer\s+/i, ''));
     if (!uid) throw fail(401, 'unauthorized');
 
-    const state = (await readJson(iam, stateKey(uid))) || {tasks: [], tags: []};
+    const state = {tasks: [], tags: [], roadmaps: [], ...(await readJson(iam, stateKey(uid)))};
     if (req.action === 'state') return {...state, token: issueToken(uid)};
+    const findMap = (id) => {
+        const map = state.roadmaps.find((r) => r.id === id);
+        if (!map) throw fail(404, 'not_found');
+        return map;
+    };
 
     switch (req.action) {
         case 'saveTask':
@@ -183,10 +217,35 @@ async function handle(req, headers, iam) {
         case 'removeTag':
             state.tags = state.tags.filter((t) => t.id !== req.id);
             break;
+        case 'saveRoadmap':
+            if (!isObj(req.item)) throw fail(400, 'bad_item');
+            state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, req.item));
+            break;
+        case 'removeRoadmap': {
+            const map = state.roadmaps.find((r) => r.id === req.id);
+            if (map && map.shareId) await deleteKey(iam, shareKey(map.shareId));
+            state.roadmaps = state.roadmaps.filter((r) => r.id !== req.id);
+            break;
+        }
+        case 'shareRoadmap': {
+            const map = findMap(req.id);
+            if (!map.shareId) {
+                map.shareId = crypto.randomBytes(18).toString('base64url');
+                await writeJson(iam, shareKey(map.shareId), {u: uid, r: map.id});
+            }
+            break;
+        }
+        case 'unshareRoadmap': {
+            const map = findMap(req.id);
+            if (map.shareId) await deleteKey(iam, shareKey(map.shareId));
+            map.shareId = null;
+            break;
+        }
         case 'import':
             if (!Array.isArray(req.tasks) || !Array.isArray(req.tags)) throw fail(400, 'bad_import');
             for (const t of req.tasks) if (isObj(t)) state.tasks = upsert(state.tasks, t);
             for (const t of req.tags) if (isObj(t)) state.tags = upsert(state.tags, t);
+            for (const r of req.roadmaps || []) if (isObj(r)) state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, r));
             break;
         default:
             throw fail(400, 'unknown_action');

@@ -5,12 +5,13 @@ const store = {};
 global.fetch = async (url, opts = {}) => {
   const k = url; const m = opts.method || 'GET';
   if (m === 'PUT') { store[k] = opts.body; return {ok: true, status: 200, text: async () => ''}; }
+  if (m === 'DELETE') { delete store[k]; return {ok: true, status: 204, text: async () => ''}; }
   if (!(k in store)) return {ok: false, status: 404, text: async () => 'nf'};
   return {ok: true, status: 200, json: async () => JSON.parse(store[k])};
 };
 const {handler} = require('../api/index.js');
 http.createServer(async (req, res) => {
-  if (req.url === '/' && req.method === 'GET') { res.setHeader('content-type', 'text/html; charset=utf-8'); return res.end(fs.readFileSync('dist/index.html')); }
+  if (req.url.split('?')[0] === '/' && req.method === 'GET') { res.setHeader('content-type', 'text/html; charset=utf-8'); return res.end(fs.readFileSync('dist/index.html')); }
   if (req.url === '/api' && req.method === 'POST') {
     let body = ''; for await (const c of req) body += c;
     const r = await handler({body, headers: req.headers, isBase64Encoded: false}, {token: {access_token: 'x'}});
