@@ -10,6 +10,7 @@ const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн'
 
 const BAR = 'FF9CC8F5';
 const HEAD = 'FFEFEFEF';
+const TODAY = 'FFFFD7D7';
 
 /** markdown описания — в простой текст для ячейки */
 const plain = (md: string) =>
@@ -22,7 +23,7 @@ const plain = (md: string) =>
 export type ExportMap = Pick<Roadmap, 'title' | 'description' | 'scale' | 'from' | 'to' | 'milestones'>;
 
 /**
- * Дорожная карта в xlsx: лист «Вехи» — таблица, лист «Гант» — вехи закрашенными ячейками.
+ * Дорожная карта в xlsx: лист «Вехи» — таблица, а справа от неё таймлайн с закрашенными ячейками.
  * tasksOf есть только у владельца: по публичной ссылке задачи не выгружаются.
  */
 export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m: Milestone) => Task[]) {
@@ -72,7 +73,6 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         cell.font = {bold: true};
         cell.fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: HEAD}};
     });
-    ws.views = [{state: 'frozen', ySplit: row}];
     for (const m of items) {
         row++;
         const r = ws.getRow(row);
@@ -90,57 +90,68 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         r.eachCell((c) => (c.alignment = {wrapText: true, vertical: 'top'}));
     }
 
-    /* ---------- лист «Гант» ---------- */
-    const gs = wb.addWorksheet('Гант');
-    const step = map.scale === 'months' ? 1 : 3;
-    const slots: {y: number; m: number; a: number; b: number}[] = [];
-    for (let y = +map.from.slice(0, 4); y <= +map.to.slice(0, 4); y++) {
-        for (let m = 1; m <= 12; m += step) {
-            const a = Date.UTC(y, m - 1, 1) / DAY;
-            const b = Date.UTC(y, m - 1 + step, 0) / DAY;
-            const ym = `${y}-${String(m).padStart(2, '0')}`;
-            const lastYm = `${y}-${String(m + step - 1).padStart(2, '0')}`;
-            if (lastYm < map.from || ym > map.to) continue;
-            slots.push({y, m, a, b});
+    /* ---------- таймлайн справа от таблицы: недели (у масштаба «Годы» — месяцы) ---------- */
+    const rs = toDay(map.from + '-01');
+    const re = Math.round(Date.UTC(+map.to.slice(0, 4), +map.to.slice(5, 7), 0) / DAY);
+    const slots: {a: number; b: number; key: string; group: string; label: string}[] = [];
+    if (map.scale === 'months') {
+        // недели с понедельника; 1970-01-01 — четверг
+        let a = rs - ((rs + 3) % 7);
+        while (a <= re) {
+            const d = new Date(Math.max(a, rs) * DAY);
+            slots.push({
+                a,
+                b: a + 6,
+                key: String(a),
+                group: `${MONTHS_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}`,
+                label: String(new Date(a * DAY).getUTCDate()),
+            });
+            a += 7;
+        }
+    } else {
+        for (let y = +map.from.slice(0, 4); y <= +map.to.slice(0, 4); y++) {
+            for (let m = 0; m < 12; m++) {
+                const a = Date.UTC(y, m, 1) / DAY;
+                const b = Date.UTC(y, m + 1, 0) / DAY;
+                if (b < rs || a > re) continue;
+                slots.push({a, b, key: `${y}-${m}`, group: String(y), label: MONTHS_SHORT[m]});
+            }
         }
     }
-    gs.getColumn(1).width = 36;
-    slots.forEach((_, i) => (gs.getColumn(i + 2).width = map.scale === 'months' ? 6 : 8));
-    // строка 1 — годы, строка 2 — месяцы или кварталы
-    gs.getCell(1, 1).value = map.title;
-    gs.getCell(1, 1).font = {bold: true};
-    let i = 0;
-    while (i < slots.length) {
-        let j = i;
-        while (j + 1 < slots.length && slots[j + 1].y === slots[i].y) j++;
-        if (j > i) gs.mergeCells(1, i + 2, 1, j + 2);
-        const c = gs.getCell(1, i + 2);
-        c.value = slots[i].y;
+    const first = last + 2; // одна пустая колонка между таблицей и таймлайном
+    slots.forEach((_, k) => (ws.getColumn(first + k).width = map.scale === 'months' ? 3.2 : 4.5));
+    const headRow = ws.getRow(row - items.length);
+    const groupRow = ws.getRow(row - items.length - 1);
+    let k = 0;
+    while (k < slots.length) {
+        let j = k;
+        while (j + 1 < slots.length && slots[j + 1].group === slots[k].group) j++;
+        if (j > k) ws.mergeCells(groupRow.number, first + k, groupRow.number, first + j);
+        const c = groupRow.getCell(first + k);
+        c.value = slots[k].group;
         c.font = {bold: true};
-        c.alignment = {horizontal: 'center'};
-        i = j + 1;
+        c.alignment = {horizontal: 'left'};
+        k = j + 1;
     }
-    slots.forEach((s, k) => {
-        const c = gs.getCell(2, k + 2);
-        c.value = map.scale === 'months' ? MONTHS_SHORT[s.m - 1] : `${(s.m + 2) / 3} кв`;
+    const today = Math.floor(Date.now() / DAY);
+    slots.forEach((slot, n) => {
+        const c = headRow.getCell(first + n);
+        c.value = slot.label;
+        c.font = {size: 9, color: {argb: 'FF666666'}};
         c.alignment = {horizontal: 'center'};
-        c.fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: HEAD}};
+        c.fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: slot.a <= today && today <= slot.b ? TODAY : HEAD}};
     });
-    gs.getCell(2, 1).value = 'Веха';
-    gs.getCell(2, 1).font = {bold: true};
-    gs.getCell(2, 1).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: HEAD}};
-    gs.views = [{state: 'frozen', xSplit: 1, ySplit: 2}];
-    items.forEach((m, k) => {
-        const r = gs.getRow(k + 3);
-        r.getCell(1).value = m.owner ? `${m.title} (${m.owner})` : m.title;
+    items.forEach((m, i) => {
+        const r = ws.getRow(headRow.number + 1 + i);
         const s = toDay(m.start);
         const e = toDay(m.end);
         slots.forEach((slot, n) => {
             if (slot.a <= e && slot.b >= s) {
-                r.getCell(n + 2).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: BAR}};
+                r.getCell(first + n).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: BAR}};
             }
         });
     });
+    ws.views = [{state: 'frozen', xSplit: 1, ySplit: headRow.number}];
 
     const buf = await wb.xlsx.writeBuffer();
     const url = URL.createObjectURL(
