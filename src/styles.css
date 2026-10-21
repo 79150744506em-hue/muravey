@@ -1752,3 +1752,32 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 .mv-share > .g-text-input {
     align-self: stretch;
 }
+
+/* публичная ссылка: описание и окно вехи */
+.mv-md {
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.mv-md > :first-child {
+    margin-top: 0;
+}
+.mv-md > :last-child {
+    margin-bottom: 0;
+}
+.mv-md a {
+    color: var(--g-color-text-link);
+}
+.mv-ms-title {
+    margin: 0;
+}
+.mv-ms-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--g-color-text-link);
+    cursor: pointer;
+}
+.mv-ms-link:hover {
+    text-decoration: underline;
+}
