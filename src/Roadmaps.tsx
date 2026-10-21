@@ -20,6 +20,8 @@ import {dayKey, uid} from './types';
 import {loadSharedRoadmap} from './store';
 import {DescriptionEditor} from './DescriptionEditor';
 import {SaveStatus, useAutosave} from './SaveStatus';
+import MarkdownIt from 'markdown-it';
+import ins from 'markdown-it-ins';
 import logo from './assets/logo.png';
 
 /* ---------- даты: считаем в днях от 1970-01-01 (UTC), чтобы не мешали часовые пояса ---------- */
@@ -686,13 +688,11 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 onAdd={p.disabled ? undefined : addMilestone}
                 meta={(m) => {
                     const ts = linked(m.id);
-                    const blockers = blockersOf(m, map.milestones);
-                    const lines = [
-                        m.owner && `👤 ${m.owner}`,
-                        blockers.length > 0 && `🔒 после ${blockers.map((b) => `«${b.title}»`).join(', ')}`,
-                        ts.length > 0 && `задач закрыто: ${ts.filter((t) => t.done).length} из ${ts.length}`,
-                    ].filter(Boolean) as string[];
-                    return lines.length ? lines.map((l) => <span key={l}>{l}</span>) : null;
+                    return milestoneMeta(
+                        m,
+                        map.milestones,
+                        ts.length > 0 ? `задач закрыто: ${ts.filter((t) => t.done).length} из ${ts.length}` : null,
+                    );
                 }}
             />
 
@@ -740,8 +740,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         {map.shareId ? (
                             <>
                                 <Text color="secondary">
-                                    По ссылке карту увидит любой, даже без аккаунта: только вехи и сроки, без задач. Менять
-                                    ничего нельзя.
+                                    По ссылке карту увидит любой, даже без аккаунта: описание, вехи, сроки, ответственных и
+                                    блокировки, но без задач. Менять ничего нельзя.
                                 </Text>
                                 <TextInput
                                     readOnly
@@ -757,8 +757,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         ) : (
                             <>
                                 <Text color="secondary">
-                                    Включите ссылку, чтобы показать карту тем, у кого нет аккаунта. Они увидят только вехи и
-                                    сроки. Ссылку можно выключить в любой момент.
+                                    Включите ссылку, чтобы показать карту тем, у кого нет аккаунта. Они увидят описание, вехи,
+                                    сроки, ответственных и блокировки, но не задачи. Ссылку можно выключить в любой момент.
                                 </Text>
                                 <Button view="action" size="m" onClick={() => p.onShare(map.id)}>
                                     <Icon data={Globe} size={16} />
@@ -771,6 +771,17 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
             </Dialog>
         </div>
     );
+}
+
+/** Подпись под вехой на ганте: ответственный, блокеры и что-то своё */
+function milestoneMeta(m: Milestone, all: Milestone[], extra?: string | null) {
+    const blockers = blockersOf(m, all);
+    const lines = [
+        m.owner && `👤 ${m.owner}`,
+        blockers.length > 0 && `🔒 после ${blockers.map((b) => `«${b.title}»`).join(', ')}`,
+        extra,
+    ].filter(Boolean) as string[];
+    return lines.length ? lines.map((l) => <span key={l}>{l}</span>) : null;
 }
 
 const shareUrl = (id: string) => `${window.location.origin}/?roadmap=${id}`;
@@ -1055,7 +1066,70 @@ function MilestoneDetails({
 
 /* ---------- просмотр по публичной ссылке ---------- */
 
+// описание по ссылке показываем готовым текстом; html в markdown не пропускаем
+const md = new MarkdownIt({html: false, linkify: true, breaks: true}).use(ins);
+const defaultLink = md.renderer.rules.link_open ?? ((t, i, o, _e, self) => self.renderToken(t, i, o));
+md.renderer.rules.link_open = (tokens, i, opts, env, self) => {
+    tokens[i].attrSet('target', '_blank');
+    tokens[i].attrSet('rel', 'noopener noreferrer');
+    return defaultLink(tokens, i, opts, env, self);
+};
+
+function Markdown({text}: {text: string}) {
+    return <div className="mv-md" dangerouslySetInnerHTML={{__html: md.render(text)}} />;
+}
+
+/** Веха по публичной ссылке: только чтение, без задач */
+function MilestoneView({milestone, all, onOpen}: {milestone: Milestone; all: Milestone[]; onOpen: (id: string) => void}) {
+    const blockers = blockersOf(milestone, all);
+    const blocks = dependentsOf(milestone, all);
+    const links = (list: Milestone[]) =>
+        list.map((x, i) => (
+            <React.Fragment key={x.id}>
+                {i > 0 && ', '}
+                <button type="button" className="mv-ms-link" onClick={() => onOpen(x.id)}>
+                    {x.title}
+                </button>
+            </React.Fragment>
+        ));
+    return (
+        <div className="mv-details mv-details_popup">
+            <div className="mv-details__head">
+                <Label theme="info" size="s" icon={<Icon data={Flag} size={12} />}>
+                    Веха
+                </Label>
+            </div>
+            <Text variant="header-1" as="h2" className="mv-ms-title">
+                {milestone.title}
+            </Text>
+            <section className="mv-field">
+                <Text variant="subheader-1">Сроки</Text>
+                <Text>{datesText(milestone)}</Text>
+            </section>
+            {milestone.owner && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Ответственный</Text>
+                    <Text>{milestone.owner}</Text>
+                </section>
+            )}
+            {blockers.length > 0 && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Блокируется вехами</Text>
+                    <Text>{links(blockers)}</Text>
+                </section>
+            )}
+            {blocks.length > 0 && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Блокирует</Text>
+                    <Text>{links(blocks)}</Text>
+                </section>
+            )}
+        </div>
+    );
+}
+
 export function SharedRoadmap({id}: {id: string}) {
+    const [openId, setOpenId] = React.useState<string | null>(null);
     type Shared = Awaited<ReturnType<typeof loadSharedRoadmap>>;
     const [state, setState] = React.useState<{kind: 'loading'} | {kind: 'error'} | {kind: 'ready'; map: Shared}>({
         kind: 'loading',
@@ -1101,12 +1175,29 @@ export function SharedRoadmap({id}: {id: string}) {
                         <Text color="secondary">Ссылка больше не работает: её выключили или карту удалили.</Text>
                     </div>
                 ) : (
-                    <Gantt roadmap={state.map} readOnly />
+                    <>
+                        {state.map.description?.trim() && <Markdown text={state.map.description} />}
+                        <Gantt
+                            roadmap={state.map}
+                            readOnly
+                            onOpen={setOpenId}
+                            meta={(m) => milestoneMeta(m, (state.map as GanttMap).milestones)}
+                        />
+                    </>
                 )}
             </main>
             <Text variant="caption-2" color="secondary" className="mv-footnote">
                 Только просмотр. Сделано в Муравье.
             </Text>
+            {(() => {
+                const all = state.kind === 'ready' && state.map ? state.map.milestones : [];
+                const m = all.find((x) => x.id === openId);
+                return (
+                    <Dialog open={Boolean(m)} onClose={() => setOpenId(null)} size="m" aria-label="Веха">
+                        {m && <MilestoneView key={m.id} milestone={m} all={all} onOpen={setOpenId} />}
+                    </Dialog>
+                );
+            })()}
         </div>
     );
 }

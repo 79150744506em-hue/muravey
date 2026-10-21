@@ -451,8 +451,8 @@ async function findServer(): Promise<{google?: string} | null> {
     }
 }
 
-/** Дорожная карта по публичной ссылке: только название, масштаб, период и вехи. null — ссылку выключили или её нет. */
-export async function loadSharedRoadmap(id: string): Promise<Pick<Roadmap, 'title' | 'scale' | 'from' | 'to' | 'milestones'> | null> {
+/** Дорожная карта по публичной ссылке: всё, кроме привязанных задач. null — ссылку выключили или её нет. */
+export async function loadSharedRoadmap(id: string): Promise<Pick<Roadmap, 'title' | 'description' | 'scale' | 'from' | 'to' | 'milestones'> | null> {
     try {
         return (await api({action: 'sharedRoadmap', id})).roadmap;
     } catch (e) {

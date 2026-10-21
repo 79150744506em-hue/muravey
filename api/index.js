@@ -156,7 +156,7 @@ async function handle(req, headers, iam) {
         return {token: issueToken(account.id)};
     }
 
-    // просмотр дорожной карты по публичной ссылке — без входа и только вехи
+    // просмотр дорожной карты по публичной ссылке — без входа и без задач
     if (req.action === 'sharedRoadmap') {
         const id = String(req.id || '');
         if (!/^[\w-]{16,64}$/.test(id)) throw fail(404, 'not_found');
@@ -167,10 +167,18 @@ async function handle(req, headers, iam) {
         return {
             roadmap: {
                 title: map.title,
+                description: map.description || '',
                 scale: map.scale,
                 from: map.from,
                 to: map.to,
-                milestones: (map.milestones || []).map(({id, title, start, end}) => ({id, title, start, end})),
+                milestones: (map.milestones || []).map(({id, title, start, end, owner, blockedBy}) => ({
+                    id,
+                    title,
+                    start,
+                    end,
+                    owner: owner || '',
+                    blockedBy: blockedBy || [],
+                })),
             },
         };
     }
