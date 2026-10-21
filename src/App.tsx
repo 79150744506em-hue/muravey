@@ -47,6 +47,7 @@ import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
 import {RoadmapsView, datesText} from './Roadmaps';
+import {SaveStatus} from './SaveStatus';
 import {SortableList, useSortableRow} from './SortableList';
 import logo from './assets/logo.png';
 
@@ -70,7 +71,6 @@ const fmtDateTime = new Intl.DateTimeFormat('ru-RU', {
     minute: '2-digit',
 });
 const fmtDate = new Intl.DateTimeFormat('ru-RU', {day: 'numeric', month: 'long'});
-const fmtTime = new Intl.DateTimeFormat('ru-RU', {hour: '2-digit', minute: '2-digit'});
 const fmtToday = new Intl.DateTimeFormat('ru-RU', {weekday: 'long', day: 'numeric', month: 'long'});
 
 function useToday() {
@@ -553,7 +553,12 @@ export function App() {
                         onOpenMilestone={setMilestoneId}
                         canShare={Boolean(backend?.shareRoadmap)}
                         disabled={!backend}
-                        onSave={(r) => backend && run(backend.saveRoadmap(r))}
+                        onSave={(r) => {
+                            if (!backend) return null;
+                            const pr = backend.saveRoadmap(r);
+                            run(pr);
+                            return pr;
+                        }}
                         onRemove={removeRoadmap}
                         onShare={(id) => backend?.shareRoadmap && run(backend.shareRoadmap(id))}
                         onUnshare={(id) => backend?.unshareRoadmap && run(backend.unshareRoadmap(id))}
@@ -1504,7 +1509,14 @@ function TaskDetails({
                 <Label theme={task.done ? 'success' : list === 'focus' ? 'utility' : 'normal'} size="s">
                     {isNew ? (list === 'focus' ? 'Новая фокусная задача' : 'Новая задача в бэклог') : where}
                 </Label>
-                <SaveStatus state={saveState} createdAt={task.createdAt} isNew={isNew} />
+                <SaveStatus
+                    state={saveState}
+                    idle={
+                        isNew
+                            ? 'Сохранится, как только появится название'
+                            : `создана ${fmtDateTime.format(new Date(task.createdAt))}`
+                    }
+                />
                 <div className="mv-details__actions">
                     {!isNew && (
                         <>
@@ -1815,44 +1827,6 @@ function TaskDetails({
                 </section>
             )}
         </div>
-    );
-}
-
-function SaveStatus({
-    state,
-    createdAt,
-    isNew,
-}: {
-    state: {kind: 'idle'} | {kind: 'pending'} | {kind: 'saved'; at: Date} | {kind: 'failed'};
-    createdAt: string;
-    isNew: boolean;
-}) {
-    if (state.kind === 'pending') {
-        return (
-            <Text variant="caption-2" color="secondary" aria-live="polite">
-                Сохраняю…
-            </Text>
-        );
-    }
-    if (state.kind === 'saved') {
-        return (
-            <Text variant="caption-2" color="secondary" className="mv-saved" aria-live="polite">
-                <Icon data={CircleCheck} size={12} />
-                Изменения сохранены в {fmtTime.format(state.at)}
-            </Text>
-        );
-    }
-    if (state.kind === 'failed') {
-        return (
-            <Text variant="caption-2" color="danger" aria-live="polite">
-                Не сохранено
-            </Text>
-        );
-    }
-    return (
-        <Text variant="caption-2" color="secondary">
-            {isNew ? 'Сохранится, как только появится название' : `создана ${fmtDateTime.format(new Date(createdAt))}`}
-        </Text>
     );
 }
 

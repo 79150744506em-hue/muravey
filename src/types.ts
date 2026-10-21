@@ -41,6 +41,10 @@ export interface Milestone {
     title: string;
     start: string; // YYYY-MM-DD
     end: string; // YYYY-MM-DD
+    /** ответственный, просто текстом */
+    owner?: string;
+    /** вехи, которые блокируют эту: она начинается не раньше, чем они закончатся */
+    blockedBy?: string[];
 }
 
 /** Дорожная карта — отдельная от задач сущность: проект или продукт, разбитый на вехи. */
@@ -48,6 +52,8 @@ export interface Roadmap {
     id: string;
     title: string;
     scale: RoadmapScale;
+    /** описание в markdown, как у задачи */
+    description?: string;
     /** период на ганте: с первого месяца по последний включительно, YYYY-MM */
     from: string;
     to: string;
