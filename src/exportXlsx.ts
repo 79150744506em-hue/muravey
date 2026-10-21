@@ -11,6 +11,9 @@ const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн'
 const BAR = 'FF9CC8F5';
 const HEAD = 'FFEFEFEF';
 const TODAY = 'FFFFD7D7';
+const DONE = 'FFA8DDB5';
+const RISK = 'FFFFCC80';
+const STATUS = {done: 'Готово', risk: 'Под риском'} as const;
 
 /** markdown описания — в простой текст для ячейки */
 const plain = (md: string) =>
@@ -44,6 +47,8 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         {header: 'Начало', width: 13},
         {header: 'Конец', width: 13},
         {header: 'Дней', width: 8},
+        {header: 'Статус', width: 14},
+        {header: 'Риск', width: 32},
         {header: 'Ответственный', width: 24},
         {header: 'Блокируется вехами', width: 32},
         ...(tasksOf ? [{header: 'Задачи', width: 48}] : []),
@@ -81,13 +86,16 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         r.getCell(3).value = asDate(m.end);
         r.getCell(2).numFmt = r.getCell(3).numFmt = 'dd.mm.yyyy';
         r.getCell(4).value = toDay(m.end) - toDay(m.start) + 1;
-        r.getCell(5).value = m.owner ?? '';
-        r.getCell(6).value = blockers(m);
+        r.getCell(5).value = m.status ? STATUS[m.status] : 'В работе';
+        r.getCell(6).value = m.status === 'risk' ? (m.risk ?? '').trim() : '';
+        r.getCell(7).value = m.owner ?? '';
+        r.getCell(8).value = blockers(m);
         if (tasksOf) {
             const ts = tasksOf(m);
-            r.getCell(7).value = ts.map((t) => `${t.done ? '✓' : '○'} ${t.title}`).join('\n');
+            r.getCell(9).value = ts.map((t) => `${t.done ? '✓' : '○'} ${t.title}`).join('\n');
         }
         r.eachCell((c) => (c.alignment = {wrapText: true, vertical: 'top'}));
+        if (m.status) r.getCell(5).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: m.status === 'done' ? DONE : RISK}};
     }
 
     /* ---------- таймлайн справа от таблицы: недели (у масштаба «Годы» — месяцы) ---------- */
@@ -145,9 +153,10 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         const r = ws.getRow(headRow.number + 1 + i);
         const s = toDay(m.start);
         const e = toDay(m.end);
+        const color = m.status === 'done' ? DONE : m.status === 'risk' ? RISK : BAR;
         slots.forEach((slot, n) => {
             if (slot.a <= e && slot.b >= s) {
-                r.getCell(first + n).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: BAR}};
+                r.getCell(first + n).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: color}};
             }
         });
     });

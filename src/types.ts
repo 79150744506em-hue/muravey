@@ -45,7 +45,13 @@ export interface Milestone {
     owner?: string;
     /** вехи, которые блокируют эту: она начинается не раньше, чем они закончатся */
     blockedBy?: string[];
+    /** нет — веха в работе */
+    status?: MilestoneStatus;
+    /** описание риска, когда status === 'risk' */
+    risk?: string;
 }
+
+export type MilestoneStatus = 'done' | 'risk';
 
 /** Дорожная карта — отдельная от задач сущность: проект или продукт, разбитый на вехи. */
 export interface Roadmap {

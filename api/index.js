@@ -171,13 +171,15 @@ async function handle(req, headers, iam) {
                 scale: map.scale,
                 from: map.from,
                 to: map.to,
-                milestones: (map.milestones || []).map(({id, title, start, end, owner, blockedBy}) => ({
+                milestones: (map.milestones || []).map(({id, title, start, end, owner, blockedBy, status, risk}) => ({
                     id,
                     title,
                     start,
                     end,
                     owner: owner || '',
                     blockedBy: blockedBy || [],
+                    status: status || undefined,
+                    risk: status === 'risk' ? risk || '' : undefined,
                 })),
             },
         };

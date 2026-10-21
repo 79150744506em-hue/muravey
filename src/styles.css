@@ -1677,6 +1677,20 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     user-select: none;
     overflow: hidden;
 }
+.mv-gantt__bar_done {
+    --mv-gantt-bar: var(--g-color-base-positive-medium, rgba(48, 170, 110, 0.3));
+    --mv-gantt-bar-line: var(--g-color-line-positive, #30aa6e);
+}
+.mv-gantt__bar_risk {
+    --mv-gantt-bar: var(--g-color-base-warning-medium, rgba(255, 190, 92, 0.5));
+    --mv-gantt-bar-line: var(--g-color-line-warning, #ffbe5c);
+}
+.mv-risk-text {
+    white-space: pre-wrap;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--g-color-base-warning-light, rgba(255, 190, 92, 0.15));
+}
 .mv-gantt__bar_drag {
     cursor: grabbing;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
