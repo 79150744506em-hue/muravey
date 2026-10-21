@@ -1616,7 +1616,15 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
         var(--g-color-base-background);
 }
 .mv-gantt__label_head {
-    justify-content: flex-end;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+}
+.mv-gantt__label_head > .g-text {
+    line-height: 24px;
+}
+.mv-gantt__to-today {
+    margin-inline-end: -6px;
 }
 .mv-gantt__name {
     font-weight: 500;
@@ -1863,6 +1871,7 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-gantt__dates {
     position: sticky;
+    z-index: 1;
     left: calc(var(--mv-gantt-label) + 4px);
     flex: 0 1 auto;
     min-width: 0;
@@ -1876,6 +1885,16 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-gantt__bar:not(.mv-gantt__bar_ro) .mv-gantt__dates {
     margin-inline-end: auto;
+}
+/* заливка: сколько задач вехи уже закрыто */
+.mv-gantt__fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: color-mix(in srgb, var(--mv-gantt-bar-line) 40%, transparent);
+    pointer-events: none;
+    transition: width 0.4s ease;
 }
 .mv-gantt__dates_out {
     position: absolute;

@@ -135,6 +135,7 @@ export function Gantt({
     onOpen,
     onAdd,
     meta,
+    progress,
 }: {
     roadmap: GanttMap;
     readOnly?: boolean;
@@ -144,6 +145,8 @@ export function Gantt({
     onOpen?: (id: string) => void;
     /** подпись под названием вехи, например сколько задач закрыто */
     meta?: (m: Milestone) => React.ReactNode;
+    /** доля закрытых задач вехи (0…1) — заливка полосы; null — задач нет */
+    progress?: (m: Milestone) => number | null;
 }) {
     const rs = monthStart(roadmap.from);
     const re = monthEnd(roadmap.to);
@@ -189,6 +192,8 @@ export function Gantt({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roadmap.from, roadmap.to, roadmap.scale, measured]);
     const hasToday = today >= rs && today <= re;
+    const toToday = () =>
+        scroller.current?.scrollTo({left: Math.max(0, x(today) - room / 4), behavior: 'smooth'});
 
     // шкала: сверху годы, снизу месяцы или кварталы
     const years: {key: string; left: number; w: number; label: string}[] = [];
@@ -267,6 +272,11 @@ export function Gantt({
                         <Text variant="caption-2" color="secondary">
                             Вехи
                         </Text>
+                        {hasToday && width > room + 1 && (
+                            <Button view="flat-secondary" size="xs" className="mv-gantt__to-today" onClick={toToday}>
+                                К сегодня
+                            </Button>
+                        )}
                     </div>
                     <div className="mv-gantt__scale" style={{width}}>
                         <div className="mv-gantt__years">
@@ -329,6 +339,7 @@ export function Gantt({
                         // сроки не влезают в короткую полосу: пишем их рядом, справа или, у края карты, слева
                         const textW = dates.length * 6.6 + 24;
                         const short = w < textW;
+                        const done = progress?.(m) ?? null;
                         const outside = short ? (left + w + 6 + textW > width ? {right: width - left + 6} : {left: left + w + 6}) : null;
                         return (
                             <div key={m.id} className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}>
@@ -348,7 +359,9 @@ export function Gantt({
                                             p ? ' mv-gantt__bar_drag' : ''
                                         }${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
                                         style={{left, width: w}}
-                                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}`}
+                                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}${
+                                            done != null ? ` · задачи закрыты на ${Math.round(done * 100)}%` : ''
+                                        }`}
                                         onPointerDown={(ev) => down(ev, m, 'move')}
                                         onPointerMove={move}
                                         onPointerUp={() => up(m)}
@@ -358,6 +371,9 @@ export function Gantt({
                                         }}
                                         onClick={readOnly && onOpen ? () => onOpen(m.id) : undefined}
                                     >
+                                        {done != null && (
+                                            <span className="mv-gantt__fill" style={{width: `${done * 100}%`}} aria-hidden="true" />
+                                        )}
                                         {!readOnly && (
                                             <span
                                                 className="mv-gantt__handle mv-gantt__handle_start"
@@ -749,16 +765,6 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     <SaveStatus state={auto.state} idle="" />
                 </div>
             </div>
-            <section className="mv-field">
-                <Text variant="subheader-1">Описание</Text>
-                <DescriptionEditor
-                    key={map.id}
-                    value={map.description ?? ''}
-                    onChange={(v) => auto.schedule({description: v})}
-                    onSubmit={auto.flush}
-                    placeholder="Цель карты, контекст, что считаем успехом"
-                />
-            </section>
             <Text variant="caption-2" color="secondary" className="mv-map__hint">
                 Тяните полосу, чтобы сдвинуть веху, или её край, чтобы изменить срок.
             </Text>
@@ -778,7 +784,22 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         ts.length > 0 ? {done: ts.filter((t) => t.done).length, total: ts.length} : null,
                     );
                 }}
+                progress={(m) => {
+                    const ts = linked(m.id);
+                    return ts.length > 0 ? ts.filter((t) => t.done).length / ts.length : null;
+                }}
             />
+
+            <section className="mv-field">
+                <Text variant="subheader-1">Описание</Text>
+                <DescriptionEditor
+                    key={map.id}
+                    value={map.description ?? ''}
+                    onChange={(v) => auto.schedule({description: v})}
+                    onSubmit={auto.flush}
+                    placeholder="Цель карты, контекст, что считаем успехом"
+                />
+            </section>
 
             <Dialog
                 open={Boolean(milestone)}
@@ -1337,13 +1358,13 @@ export function SharedRoadmap({id}: {id: string}) {
                     </div>
                 ) : (
                     <>
-                        {state.map.description?.trim() && <Markdown text={state.map.description} />}
                         <Gantt
                             roadmap={state.map}
                             readOnly
                             onOpen={setOpenId}
                             meta={(m) => milestoneMeta(m, (state.map as GanttMap).milestones)}
                         />
+                        {state.map.description?.trim() && <Markdown text={state.map.description} />}
                     </>
                 )}
             </main>
