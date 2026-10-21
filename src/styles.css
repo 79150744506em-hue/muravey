@@ -1421,18 +1421,73 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 14px 16px;
+    padding: 16px 16px 14px;
     border: 1px solid var(--g-color-line-generic);
-    border-radius: var(--g-border-radius-l, 10px);
+    border-radius: var(--g-border-radius-xl, 16px);
     background: var(--g-color-base-float);
     font: inherit;
     color: inherit;
     text-align: left;
     cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.2s, transform 0.2s;
 }
 .mv-map-card:hover {
     border-color: var(--g-color-line-generic-active);
-    background: var(--g-color-base-simple-hover);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+.mv-map-card:focus-visible {
+    outline: 2px solid var(--g-color-line-focus);
+    outline-offset: 2px;
+}
+/* мини-гант на карточке: вехи на шкале периода */
+.mv-map-card__strip {
+    display: block;
+    position: relative;
+    margin-top: auto;
+    min-height: 44px;
+}
+.mv-map-card__strip-bar {
+    position: absolute;
+    height: 6px;
+    min-width: 4px;
+    border-radius: 3px;
+    background: var(--mv-gantt-bar-line, var(--g-color-line-info, #3697f1));
+    opacity: 0.75;
+}
+.mv-map-card__strip-axis {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-top: 1px dashed var(--g-color-line-generic);
+}
+.mv-map-card__strip-today {
+    position: absolute;
+    top: 8px;
+    bottom: 0;
+    border-left: 2px solid var(--mv-today);
+    border-radius: 1px;
+}
+.mv-maps-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--g-spacing-3);
+    padding: var(--g-spacing-10) var(--g-spacing-4);
+    text-align: center;
+    border: 1px dashed var(--g-color-line-generic);
+    border-radius: var(--g-border-radius-xl, 16px);
+}
+.mv-maps-empty__ant {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    animation: mv-ant-bob 2.4s ease-in-out infinite;
+}
+@keyframes mv-ant-bob {
+    0%, 100% { transform: translateY(0) rotate(-3deg); }
+    50% { transform: translateY(-4px) rotate(3deg); }
 }
 .mv-map-card__title {
     font-weight: 600;
@@ -1463,6 +1518,17 @@ body {
     align-items: center;
     gap: var(--g-spacing-2);
     flex-wrap: wrap;
+}
+.mv-map__titles {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.mv-map__titles .mv-map__title {
+    margin-inline-start: -2px;
+}
+.mv-map .mv-desc .ProseMirror {
+    min-height: 44px;
 }
 .mv-map__title.g-text-input .g-text-input__control {
     height: auto;
@@ -1495,13 +1561,17 @@ body {
 }
 
 /* гант */
+:root {
+    /* «сегодня» на ганте: кораллом, как муравей на логотипе */
+    --mv-today: #f2552c;
+}
 .mv-gantt {
-    --mv-gantt-label: 220px;
+    --mv-gantt-label: 240px;
     --mv-gantt-bar: var(--g-color-base-info-medium, rgba(54, 151, 241, 0.3));
     --mv-gantt-bar-line: var(--g-color-line-info, #3697f1);
     overflow-x: auto;
     border: 1px solid var(--g-color-line-generic);
-    border-radius: var(--g-border-radius-l, 10px);
+    border-radius: var(--g-border-radius-xl, 16px);
     background: var(--g-color-base-background);
 }
 .mv-gantt__inner {
@@ -1513,6 +1583,7 @@ body {
 }
 .mv-gantt__head {
     border-bottom: 1px solid var(--g-color-line-generic);
+    background: var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.02));
 }
 .mv-gantt__label {
     position: sticky;
@@ -1538,16 +1609,32 @@ button.mv-gantt__label:not(:disabled) {
     cursor: pointer;
 }
 button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
-    text-decoration: underline;
+    color: var(--g-color-text-link-hover, var(--g-color-text-link));
+}
+.mv-gantt__head .mv-gantt__label {
+    background: linear-gradient(var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.02)), var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.02))),
+        var(--g-color-base-background);
 }
 .mv-gantt__label_head {
-    justify-content: flex-end;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+}
+.mv-gantt__label_head > .g-text {
+    line-height: 24px;
+}
+.mv-gantt__to-today {
+    margin-inline-end: -6px;
 }
 .mv-gantt__name {
     font-weight: 500;
+    line-height: 18px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    transition: color 0.15s;
 }
 .mv-gantt__meta {
     display: flex;
@@ -1556,7 +1643,18 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     color: var(--g-color-text-secondary);
     min-width: 0;
 }
-.mv-gantt__meta > span {
+.mv-gantt__meta-line {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    line-height: 18px;
+}
+.mv-gantt__meta-line > svg {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+.mv-gantt__meta-line > span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1564,6 +1662,9 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 .mv-gantt__label_add {
     padding-block: 6px;
     align-items: flex-start;
+}
+.mv-map__hint {
+    margin-bottom: calc(var(--g-spacing-1) * -1);
 }
 .mv-map__sub {
     display: flex;
@@ -1612,6 +1713,29 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-gantt__year {
     font-weight: 600;
+    padding-inline: 0;
+    overflow: clip;
+}
+/* год остаётся виден, пока его колонка на экране */
+.mv-gantt__year-text {
+    position: sticky;
+    left: calc(var(--mv-gantt-label) + 8px);
+    padding-inline: 8px;
+}
+.mv-gantt__today-pill {
+    position: absolute;
+    top: 4px;
+    transform: translateX(-50%);
+    padding: 0 7px;
+    border-radius: 9px;
+    background: var(--mv-today);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 18px;
+    white-space: nowrap;
+    z-index: 1;
+    pointer-events: none;
 }
 .mv-gantt__cell {
     font-size: var(--g-text-caption-2-font-size, 12px);
@@ -1619,6 +1743,7 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-gantt__body {
     position: relative;
+    display: flow-root;
     min-height: 120px;
 }
 .mv-gantt__grid {
@@ -1642,17 +1767,53 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     position: absolute;
     top: 0;
     bottom: 0;
-    border-left: 2px solid var(--g-color-line-danger, #e9033a);
+    margin-left: -1px;
+    border-left: 2px solid var(--mv-today);
+    opacity: 0.85;
+}
+/* прошедшее время слегка притушено */
+.mv-gantt__past {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.025));
 }
 .mv-gantt__empty {
     position: sticky;
     left: 0;
-    display: inline-block;
-    padding: var(--g-spacing-8) var(--g-spacing-4);
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: var(--g-spacing-3);
+    width: max-content;
+    max-width: calc(100vw - 64px);
+    margin: var(--g-spacing-6) var(--g-spacing-4);
+    padding: var(--g-spacing-3) var(--g-spacing-4);
+    border-radius: var(--g-border-radius-l, 10px);
+    background: var(--g-color-base-background);
+    box-shadow: 0 0 0 1px var(--g-color-line-generic);
+}
+.mv-gantt__empty img {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+    flex-shrink: 0;
 }
 .mv-gantt__row {
-    min-height: 52px;
+    position: relative;
+    min-height: 56px;
     border-bottom: 1px solid var(--g-color-line-generic);
+    transition: background-color 0.15s;
+}
+.mv-gantt__row:not(.mv-gantt__row_add):hover,
+.mv-gantt__row_drag {
+    background: var(--g-color-base-simple-hover);
+}
+.mv-gantt__row:not(.mv-gantt__row_add):hover > .mv-gantt__label,
+.mv-gantt__row_drag > .mv-gantt__label {
+    background: linear-gradient(var(--g-color-base-simple-hover), var(--g-color-base-simple-hover)),
+        var(--g-color-base-background);
 }
 .mv-gantt__row:last-child {
     border-bottom: 0;
@@ -1663,19 +1824,26 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-gantt__bar {
     position: absolute;
-    top: 10px;
-    bottom: 10px;
-    min-height: 30px;
+    top: 50%;
+    height: 32px;
+    margin-top: -16px;
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    border: 1px solid var(--mv-gantt-bar-line);
+    border: 1px solid color-mix(in srgb, var(--mv-gantt-bar-line) 70%, transparent);
+    border-left: 4px solid var(--mv-gantt-bar-line);
     border-radius: 8px;
     background: var(--mv-gantt-bar);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
     cursor: grab;
     touch-action: none;
     user-select: none;
-    overflow: hidden;
+    /* clip, а не hidden: так подпись со сроками может «прилипать» к левому краю видимой области */
+    overflow: clip;
+    transition: left 0.25s ease, width 0.25s ease, box-shadow 0.15s, transform 0.15s;
+}
+.mv-gantt__bar:hover {
+    box-shadow: 0 3px 10px color-mix(in srgb, var(--mv-gantt-bar-line) 35%, transparent);
 }
 .mv-gantt__bar_done {
     --mv-gantt-bar: var(--g-color-base-positive-medium, rgba(48, 170, 110, 0.3));
@@ -1693,36 +1861,98 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-gantt__bar_drag {
     cursor: grabbing;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    transform: translateY(-1px);
+    transition: box-shadow 0.15s, transform 0.15s;
     z-index: 1;
 }
 .mv-gantt__bar_ro {
-    cursor: default;
+    cursor: pointer;
 }
 .mv-gantt__dates {
-    flex: 1;
+    position: sticky;
+    z-index: 1;
+    left: calc(var(--mv-gantt-label) + 4px);
+    flex: 0 1 auto;
     min-width: 0;
-    padding-inline: 10px;
+    padding-inline: 8px;
     font-size: var(--g-text-caption-2-font-size, 12px);
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     pointer-events: none;
 }
+.mv-gantt__bar:not(.mv-gantt__bar_ro) .mv-gantt__dates {
+    margin-inline-end: auto;
+}
+/* заливка: сколько задач вехи уже закрыто */
+.mv-gantt__fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: color-mix(in srgb, var(--mv-gantt-bar-line) 40%, transparent);
+    pointer-events: none;
+    transition: width 0.4s ease;
+}
+.mv-gantt__dates_out {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    padding-inline: 0;
+    color: var(--g-color-text-secondary);
+    font-weight: 400;
+}
+/* ручки по краям: видны, когда наводишь на полосу */
 .mv-gantt__handle {
-    flex: 0 0 8px;
+    position: relative;
+    flex: 0 0 10px;
     align-self: stretch;
     cursor: ew-resize;
     touch-action: none;
 }
-.mv-gantt__handle:hover,
-.mv-gantt__bar_drag .mv-gantt__handle {
+.mv-gantt__handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2px;
+    height: 12px;
+    margin: -6px 0 0 -1px;
+    border-radius: 1px;
     background: var(--mv-gantt-bar-line);
-    opacity: 0.5;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.mv-gantt__bar:hover .mv-gantt__handle::after,
+.mv-gantt__bar_drag .mv-gantt__handle::after {
+    opacity: 0.7;
+}
+.mv-gantt__handle:hover::after {
+    opacity: 1 !important;
+    height: 16px;
+    margin-top: -8px;
+}
+.mv-gantt__handle_start {
+    margin-left: -2px;
 }
 @media (max-width: 640px) {
     .mv-gantt {
-        --mv-gantt-label: 130px;
+        --mv-gantt-label: 140px;
+    }
+    .mv-gantt__label {
+        padding-inline: 10px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .mv-gantt,
+    .mv-gantt__bar,
+    .mv-map-card {
+        transition: none;
+    }
+    .mv-maps-empty__ant {
+        animation: none;
     }
 }
 
@@ -1794,4 +2024,10 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 .mv-ms-link:hover {
     text-decoration: underline;
+}
+.mv-gantt__meta-line_done {
+    color: var(--g-color-text-positive);
+}
+.mv-gantt__meta-line_risk {
+    color: var(--g-color-text-warning);
 }

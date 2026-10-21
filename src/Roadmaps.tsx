@@ -14,7 +14,22 @@ import {
     TextArea,
     TextInput,
 } from '@gravity-ui/uikit';
-import {ArrowDownToLine, ArrowLeft, Flag, Gear, Globe, LinkSlash, Lock, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
+import {
+    ArrowDownToLine,
+    ArrowLeft,
+    CircleCheck,
+    CircleCheckFill,
+    Flag,
+    Gear,
+    Globe,
+    LinkSlash,
+    Lock,
+    Person,
+    Plus,
+    TrashBin,
+    TriangleExclamation,
+    Xmark,
+} from '@gravity-ui/icons';
 
 import type {Milestone, Roadmap, RoadmapScale, Task} from './types';
 import {dayKey, uid} from './types';
@@ -38,7 +53,9 @@ const ymOf = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const fmtDay = new Intl.DateTimeFormat('ru-RU', {day: 'numeric', month: 'short', timeZone: 'UTC'});
-const fmtDayYear = new Intl.DateTimeFormat('ru-RU', {day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC'});
+const fmtDayYearFull = new Intl.DateTimeFormat('ru-RU', {day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC'});
+// «2 нояб. 2026» вместо «2 нояб. 2026 г.»: короче и спокойнее на полосе
+const fmtDayYear = {format: (d: Date) => fmtDayYearFull.format(d).replace(/\s*г\.$/, '')};
 
 const fmtYm = (ym: string) => `${MONTHS_SHORT[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
 export const periodText = (r: Pick<Roadmap, 'scale' | 'from' | 'to'>) =>
@@ -118,6 +135,7 @@ export function Gantt({
     onOpen,
     onAdd,
     meta,
+    progress,
 }: {
     roadmap: GanttMap;
     readOnly?: boolean;
@@ -127,6 +145,8 @@ export function Gantt({
     onOpen?: (id: string) => void;
     /** подпись под названием вехи, например сколько задач закрыто */
     meta?: (m: Milestone) => React.ReactNode;
+    /** доля закрытых задач вехи (0…1) — заливка полосы; null — задач нет */
+    progress?: (m: Milestone) => number | null;
 }) {
     const rs = monthStart(roadmap.from);
     const re = monthEnd(roadmap.to);
@@ -164,12 +184,16 @@ export function Gantt({
         moved: boolean;
     } | null>(null);
 
-    // сразу показываем сегодняшний день, если он на карте
+    // сразу показываем сегодняшний день, если он на карте: на первой четверти, чтобы было видно и прошлое
+    const measured = room > 0;
     React.useEffect(() => {
         const el = scroller.current;
-        if (el && today >= rs && today <= re) el.scrollLeft = Math.max(0, x(today) - 120);
+        if (el && today >= rs && today <= re) el.scrollLeft = Math.max(0, x(today) - Math.max(room, 0) / 4);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roadmap.from, roadmap.to, roadmap.scale]);
+    }, [roadmap.from, roadmap.to, roadmap.scale, measured]);
+    const hasToday = today >= rs && today <= re;
+    const toToday = () =>
+        scroller.current?.scrollTo({left: Math.max(0, x(today) - room / 4), behavior: 'smooth'});
 
     // шкала: сверху годы, снизу месяцы или кварталы
     const years: {key: string; left: number; w: number; label: string}[] = [];
@@ -248,12 +272,17 @@ export function Gantt({
                         <Text variant="caption-2" color="secondary">
                             Вехи
                         </Text>
+                        {hasToday && width > room + 1 && (
+                            <Button view="flat-secondary" size="xs" className="mv-gantt__to-today" onClick={toToday}>
+                                К сегодня
+                            </Button>
+                        )}
                     </div>
                     <div className="mv-gantt__scale" style={{width}}>
                         <div className="mv-gantt__years">
                             {years.map((y) => (
                                 <span key={y.key} className="mv-gantt__year" style={{left: y.left, width: y.w}}>
-                                    {y.label}
+                                    <span className="mv-gantt__year-text">{y.label}</span>
                                 </span>
                             ))}
                         </div>
@@ -264,6 +293,11 @@ export function Gantt({
                                 </span>
                             ))}
                         </div>
+                        {hasToday && (
+                            <span className="mv-gantt__today-pill" style={{left: x(today) + px / 2}}>
+                                сегодня
+                            </span>
+                        )}
                     </div>
                 </div>
 
@@ -275,15 +309,19 @@ export function Gantt({
                         {years.map((y) => (
                             <span key={y.key} className="mv-gantt__line mv-gantt__line_year" style={{left: y.left}} />
                         ))}
-                        {today >= rs && today <= re && (
-                            <span className="mv-gantt__today" style={{left: x(today) + px / 2}} title="Сегодня" />
+                        {hasToday && (
+                            <>
+                                <span className="mv-gantt__past" style={{width: x(today) + px / 2}} />
+                                <span className="mv-gantt__today" style={{left: x(today) + px / 2}} title="Сегодня" />
+                            </>
                         )}
                     </div>
 
                     {items.length === 0 && (
                         <div className="mv-gantt__empty">
+                            <img src={logo} alt="" />
                             <Text color="secondary">
-                                {readOnly ? 'Вех пока нет.' : 'Вех пока нет. Добавьте первую плюсиком ниже.'}
+                                {readOnly ? 'Вех пока нет.' : 'Вех пока нет. Добавьте первую кнопкой «Новая веха» ниже.'}
                             </Text>
                         </div>
                     )}
@@ -298,8 +336,13 @@ export function Gantt({
                         const left = x(a);
                         const w = Math.max(8, (b - a + 1) * px);
                         const dates = datesText({start: fromDay(s), end: fromDay(e)});
+                        // сроки не влезают в короткую полосу: пишем их рядом, справа или, у края карты, слева
+                        const textW = dates.length * 6.6 + 24;
+                        const short = w < textW;
+                        const done = progress?.(m) ?? null;
+                        const outside = short ? (left + w + 6 + textW > width ? {right: width - left + 6} : {left: left + w + 6}) : null;
                         return (
-                            <div key={m.id} className="mv-gantt__row">
+                            <div key={m.id} className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}>
                                 <button
                                     type="button"
                                     className="mv-gantt__label"
@@ -316,7 +359,9 @@ export function Gantt({
                                             p ? ' mv-gantt__bar_drag' : ''
                                         }${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
                                         style={{left, width: w}}
-                                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}`}
+                                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}${
+                                            done != null ? ` · задачи закрыты на ${Math.round(done * 100)}%` : ''
+                                        }`}
                                         onPointerDown={(ev) => down(ev, m, 'move')}
                                         onPointerMove={move}
                                         onPointerUp={() => up(m)}
@@ -326,6 +371,9 @@ export function Gantt({
                                         }}
                                         onClick={readOnly && onOpen ? () => onOpen(m.id) : undefined}
                                     >
+                                        {done != null && (
+                                            <span className="mv-gantt__fill" style={{width: `${done * 100}%`}} aria-hidden="true" />
+                                        )}
                                         {!readOnly && (
                                             <span
                                                 className="mv-gantt__handle mv-gantt__handle_start"
@@ -335,10 +383,12 @@ export function Gantt({
                                                 aria-hidden="true"
                                             />
                                         )}
-                                        <span className="mv-gantt__dates">
-                                            {m.status === 'done' ? '✓ ' : m.status === 'risk' ? '⚠ ' : ''}
-                                            {dates}
-                                        </span>
+                                        {!short && (
+                                            <span className="mv-gantt__dates">
+                                                {statusMark(m)}
+                                                {dates}
+                                            </span>
+                                        )}
                                         {!readOnly && (
                                             <span
                                                 className="mv-gantt__handle mv-gantt__handle_end"
@@ -349,6 +399,12 @@ export function Gantt({
                                             />
                                         )}
                                     </div>
+                                    {outside && (
+                                        <span className="mv-gantt__dates mv-gantt__dates_out" style={outside}>
+                                            {statusMark(m)}
+                                            {dates}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         );
@@ -545,8 +601,9 @@ export function RoadmapsView(p: RoadmapsProps) {
                 Новая дорожная карта
             </Button>
             {sorted.length === 0 ? (
-                <div className="mv-empty">
-                    <Text color="secondary">Дорожных карт пока нет.</Text>
+                <div className="mv-maps-empty">
+                    <img src={logo} alt="" className="mv-maps-empty__ant" />
+                    <Text color="secondary">Дорожных карт пока нет. Муравей готов прокладывать маршрут.</Text>
                 </div>
             ) : (
                 <ul className="mv-maps">
@@ -562,6 +619,7 @@ export function RoadmapsView(p: RoadmapsProps) {
                                         <Icon data={Globe} size={14} />
                                     </span>
                                 )}
+                                <MiniTimeline map={r} />
                             </button>
                         </li>
                     ))}
@@ -578,6 +636,33 @@ export function RoadmapsView(p: RoadmapsProps) {
                 }}
             />
         </>
+    );
+}
+
+/** Вехи карты одной полоской: видно, как карта выглядит, ещё до того, как её открыли */
+function MiniTimeline({map}: {map: Roadmap}) {
+    const rs = monthStart(map.from);
+    const re = monthEnd(map.to);
+    const span = re - rs + 1;
+    const pct = (d: number) => `${((Math.min(Math.max(d, rs), re + 1) - rs) / span) * 100}%`;
+    const items = [...map.milestones].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 4);
+    const today = toDay(dayKey());
+    return (
+        <span className="mv-map-card__strip" aria-hidden="true">
+            {items.map((m, i) => {
+                const a = toDay(m.start);
+                const b = toDay(m.end) + 1;
+                return (
+                    <span
+                        key={m.id}
+                        className={`mv-map-card__strip-bar${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
+                        style={{left: pct(a), width: `calc(${pct(b)} - ${pct(a)})`, top: 12 + i * 7}}
+                    />
+                );
+            })}
+            <span className="mv-map-card__strip-axis" />
+            {today >= rs && today <= re && <span className="mv-map-card__strip-today" style={{left: pct(today)}} />}
+        </span>
     );
 }
 
@@ -656,39 +741,31 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     />
                 </div>
             </div>
-            <TextInput
-                view="clear"
-                size="xl"
-                className="mv-map__title"
-                value={title}
-                onUpdate={(v) => {
-                    setTitle(v);
-                    if (v.trim()) auto.schedule({title: v.trim()});
-                }}
-                onBlur={() => {
-                    if (!title.trim()) setTitle(map.title);
-                    auto.flush();
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                aria-label="Название дорожной карты"
-            />
-            <div className="mv-map__sub">
-                <Text variant="body-1" color="secondary">
-                    {SCALE_NAMES[map.scale]} · {periodText(map)}
-                </Text>
-                <SaveStatus state={auto.state} idle="" />
-            </div>
-            <section className="mv-field">
-                <Text variant="subheader-1">Описание</Text>
-                <DescriptionEditor
-                    key={map.id}
-                    value={map.description ?? ''}
-                    onChange={(v) => auto.schedule({description: v})}
-                    onSubmit={auto.flush}
-                    placeholder="Цель карты, контекст, что считаем успехом"
+            <div className="mv-map__titles">
+                <TextInput
+                    view="clear"
+                    size="xl"
+                    className="mv-map__title"
+                    value={title}
+                    onUpdate={(v) => {
+                        setTitle(v);
+                        if (v.trim()) auto.schedule({title: v.trim()});
+                    }}
+                    onBlur={() => {
+                        if (!title.trim()) setTitle(map.title);
+                        auto.flush();
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                    aria-label="Название дорожной карты"
                 />
-            </section>
-            <Text variant="body-1" color="secondary">
+                <div className="mv-map__sub">
+                    <Text variant="body-1" color="secondary">
+                        {SCALE_NAMES[map.scale]} · {periodText(map)} · {milestonesWord(map.milestones.length)}
+                    </Text>
+                    <SaveStatus state={auto.state} idle="" />
+                </div>
+            </div>
+            <Text variant="caption-2" color="secondary" className="mv-map__hint">
                 Тяните полосу, чтобы сдвинуть веху, или её край, чтобы изменить срок.
             </Text>
 
@@ -704,10 +781,25 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     return milestoneMeta(
                         m,
                         map.milestones,
-                        ts.length > 0 ? `задач закрыто: ${ts.filter((t) => t.done).length} из ${ts.length}` : null,
+                        ts.length > 0 ? {done: ts.filter((t) => t.done).length, total: ts.length} : null,
                     );
                 }}
+                progress={(m) => {
+                    const ts = linked(m.id);
+                    return ts.length > 0 ? ts.filter((t) => t.done).length / ts.length : null;
+                }}
             />
+
+            <section className="mv-field">
+                <Text variant="subheader-1">Описание</Text>
+                <DescriptionEditor
+                    key={map.id}
+                    value={map.description ?? ''}
+                    onChange={(v) => auto.schedule({description: v})}
+                    onSubmit={auto.flush}
+                    placeholder="Цель карты, контекст, что считаем успехом"
+                />
+            </section>
 
             <Dialog
                 open={Boolean(milestone)}
@@ -794,16 +886,32 @@ export function statusText(m: Pick<Milestone, 'status' | 'risk'>) {
     return 'В работе';
 }
 
-function milestoneMeta(m: Milestone, all: Milestone[], extra?: string | null) {
+const statusMark = (m: Pick<Milestone, 'status'>) => (m.status === 'done' ? '✓ ' : m.status === 'risk' ? '⚠ ' : '');
+
+function milestoneMeta(m: Milestone, all: Milestone[], tasks?: {done: number; total: number} | null) {
     const blockers = blockersOf(m, all);
-    const lines = [
-        m.status === 'done' && '✓ Готово',
-        m.status === 'risk' && `⚠ ${m.risk?.trim() || 'Под риском'}`,
-        m.owner && `👤 ${m.owner}`,
-        blockers.length > 0 && `🔒 после ${blockers.map((b) => `«${b.title}»`).join(', ')}`,
-        extra,
-    ].filter(Boolean) as string[];
-    return lines.length ? lines.map((l) => <span key={l}>{l}</span>) : null;
+    const lines: {key: string; icon: typeof Person; text: string; title?: string; tone?: string}[] = [];
+    if (m.status === 'done') lines.push({key: 'status', icon: CircleCheckFill, text: 'Готово', tone: 'done'});
+    if (m.status === 'risk')
+        lines.push({key: 'status', icon: TriangleExclamation, text: m.risk?.trim() || 'Под риском', title: statusText(m), tone: 'risk'});
+    if (m.owner) lines.push({key: 'owner', icon: Person, text: m.owner, title: 'Ответственный'});
+    if (blockers.length > 0) {
+        const text = `после ${blockers.map((b) => `«${b.title}»`).join(', ')}`;
+        lines.push({key: 'lock', icon: Lock, text, title: text});
+    }
+    if (tasks) lines.push({key: 'tasks', icon: CircleCheck, text: `${tasks.done} из ${tasks.total} задач`, title: 'Задач закрыто'});
+    return lines.length
+        ? lines.map((l) => (
+              <span
+                  key={l.key}
+                  className={`mv-gantt__meta-line${l.tone ? ` mv-gantt__meta-line_${l.tone}` : ''}`}
+                  title={l.title}
+              >
+                  <Icon data={l.icon} size={12} />
+                  <span>{l.text}</span>
+              </span>
+          ))
+        : null;
 }
 
 const shareUrl = (id: string) => `${window.location.origin}/?roadmap=${id}`;
@@ -1250,13 +1358,13 @@ export function SharedRoadmap({id}: {id: string}) {
                     </div>
                 ) : (
                     <>
-                        {state.map.description?.trim() && <Markdown text={state.map.description} />}
                         <Gantt
                             roadmap={state.map}
                             readOnly
                             onOpen={setOpenId}
                             meta={(m) => milestoneMeta(m, (state.map as GanttMap).milestones)}
                         />
+                        {state.map.description?.trim() && <Markdown text={state.map.description} />}
                     </>
                 )}
             </main>
