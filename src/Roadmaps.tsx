@@ -13,11 +13,13 @@ import {
     Text,
     TextInput,
 } from '@gravity-ui/uikit';
-import {ArrowLeft, Flag, Gear, Globe, LinkSlash, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
+import {ArrowLeft, Flag, Gear, Globe, LinkSlash, Lock, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
 
 import type {Milestone, Roadmap, RoadmapScale, Task} from './types';
 import {dayKey, uid} from './types';
 import {loadSharedRoadmap} from './store';
+import {DescriptionEditor} from './DescriptionEditor';
+import {SaveStatus, useAutosave} from './SaveStatus';
 import logo from './assets/logo.png';
 
 /* ---------- даты: считаем в днях от 1970-01-01 (UTC), чтобы не мешали часовые пояса ---------- */
@@ -55,15 +57,68 @@ const dayPx = (scale: RoadmapScale) => (scale === 'months' ? 4 : 240 / 365.25);
 
 type GanttMap = Pick<Roadmap, 'scale' | 'from' | 'to' | 'milestones'>;
 
+/* ---------- блокировки: веха начинается не раньше, чем закончатся её блокеры ---------- */
+
+export const blockersOf = (m: Milestone, all: Milestone[]) =>
+    (m.blockedBy ?? []).map((id) => all.find((x) => x.id === id)).filter((x): x is Milestone => Boolean(x));
+export const dependentsOf = (m: Milestone, all: Milestone[]) => all.filter((x) => x.blockedBy?.includes(m.id));
+
+/** В каких днях может лежать веха: после всех блокеров и до начала всех, кого она блокирует. */
+function limits(m: Milestone, all: Milestone[], rs: number, re: number) {
+    let lo = rs;
+    for (const b of blockersOf(m, all)) lo = Math.max(lo, toDay(b.end) + 1);
+    let hi = re;
+    for (const d of dependentsOf(m, all)) hi = Math.min(hi, toDay(d.start) - 1);
+    return {lo, hi};
+}
+
+/** Вехи, которые (через цепочку) заблокированы вехой m: их нельзя сделать её блокерами — получится круг. */
+function downstream(m: Milestone, all: Milestone[]) {
+    const seen = new Set<string>();
+    const walk = (x: Milestone) => {
+        for (const d of dependentsOf(x, all)) {
+            if (!seen.has(d.id)) {
+                seen.add(d.id);
+                walk(d);
+            }
+        }
+    };
+    walk(m);
+    return seen;
+}
+
+/** Появилась новая блокировка: сдвигаем веху и всё, что за ней, позже, сохраняя длительность. */
+function pushLater(all: Milestone[], id: string, re: number): Milestone[] {
+    let list = all;
+    const visit = (mid: string, depth: number) => {
+        const m = list.find((x) => x.id === mid);
+        if (!m || depth > all.length) return;
+        let lo = -Infinity;
+        for (const b of blockersOf(m, list)) lo = Math.max(lo, toDay(b.end) + 1);
+        const s = toDay(m.start);
+        if (s < lo) {
+            const len = toDay(m.end) - s;
+            const next = {...m, start: fromDay(Math.min(lo, re)), end: fromDay(Math.min(lo + len, re))};
+            list = list.map((x) => (x.id === mid ? next : x));
+        }
+        for (const d of dependentsOf(m, list)) visit(d.id, depth + 1);
+    };
+    visit(id, 0);
+    return list;
+}
+
 export function Gantt({
     roadmap,
     readOnly = false,
     onChange,
     onOpen,
+    onAdd,
     meta,
 }: {
     roadmap: GanttMap;
     readOnly?: boolean;
+    /** плюсик «Новая веха» под списком */
+    onAdd?: () => void;
     onChange?: (m: Milestone) => void;
     onOpen?: (id: string) => void;
     /** подпись под названием вехи, например сколько задач закрыто */
@@ -100,6 +155,8 @@ export function Gantt({
         x0: number;
         start: number;
         end: number;
+        lo: number;
+        hi: number;
         moved: boolean;
     } | null>(null);
 
@@ -138,7 +195,8 @@ export function Gantt({
         e.stopPropagation();
         if (readOnly) return;
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        drag.current = {id: m.id, mode, x0: e.clientX, start: toDay(m.start), end: toDay(m.end), moved: false};
+        const {lo, hi} = limits(m, roadmap.milestones, rs, re);
+        drag.current = {id: m.id, mode, x0: e.clientX, start: toDay(m.start), end: toDay(m.end), lo, hi, moved: false};
     };
     const move = (e: React.PointerEvent) => {
         const d = drag.current;
@@ -148,14 +206,17 @@ export function Gantt({
         if (!d.moved) return;
         const days = Math.round(dx / px);
         let {start, end} = d;
+        // заблокированную веху не утащить раньше блокера, а блокер — позже того, что он держит
+        const {lo, hi} = d;
         if (d.mode === 'move') {
             const len = end - start;
-            start = Math.min(Math.max(rs, start + days), re - len);
+            if (hi - len < lo) return;
+            start = Math.min(Math.max(lo, start + days), hi - len);
             end = start + len;
         } else if (d.mode === 'start') {
-            start = Math.min(Math.max(rs, start + days), end);
+            start = Math.min(Math.max(lo, start + days), end);
         } else {
-            end = Math.max(Math.min(re, end + days), start);
+            end = Math.max(Math.min(hi, end + days), start);
         }
         setPreview({id: d.id, start, end});
     };
@@ -218,7 +279,7 @@ export function Gantt({
                     {items.length === 0 && (
                         <div className="mv-gantt__empty">
                             <Text color="secondary">
-                                {readOnly ? 'Вех пока нет.' : 'Вех пока нет. Добавьте первую кнопкой «Новая веха».'}
+                                {readOnly ? 'Вех пока нет.' : 'Вех пока нет. Добавьте первую плюсиком ниже.'}
                             </Text>
                         </div>
                     )}
@@ -285,6 +346,17 @@ export function Gantt({
                             </div>
                         );
                     })}
+
+                    {onAdd && !readOnly && (
+                        <div className="mv-gantt__row mv-gantt__row_add">
+                            <div className="mv-gantt__label mv-gantt__label_add">
+                                <Button view="flat-secondary" size="m" onClick={onAdd}>
+                                    <Icon data={Plus} size={16} />
+                                    Новая веха
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -431,7 +503,7 @@ export type RoadmapsProps = {
     onOpenMilestone: (id: string | null) => void;
     canShare: boolean;
     disabled: boolean;
-    onSave: (r: Roadmap) => void;
+    onSave: (r: Roadmap) => Promise<void> | null;
     onRemove: (r: Roadmap) => void;
     onShare: (id: string) => void;
     onUnshare: (id: string) => void;
@@ -511,12 +583,17 @@ function milestonesWord(n: number) {
 
 function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
     const [title, setTitle] = React.useState(map.title);
-    React.useEffect(() => setTitle(map.title), [map.title]);
     const [settings, setSettings] = React.useState(false);
     const [sharing, setSharing] = React.useState(false);
     const milestone = map.milestones.find((m) => m.id === p.milestoneId);
 
-    const saveMilestone = (m: Milestone) => p.onSave({...map, milestones: map.milestones.map((x) => (x.id === m.id ? m : x))});
+    // правки накладываем на самую свежую версию карты: текст сохраняется с задержкой
+    const mapRef = React.useRef(map);
+    mapRef.current = map;
+    const saveMap = (patch: Partial<Roadmap>) => p.onSave({...mapRef.current, ...patch});
+    const auto = useAutosave<Roadmap>(saveMap);
+    const patchMilestone = (id: string, patch: Partial<Milestone>) =>
+        saveMap({milestones: mapRef.current.milestones.map((x) => (x.id === id ? {...x, ...patch} : x))});
     const addMilestone = () => {
         const rs = monthStart(map.from);
         const re = monthEnd(map.to);
@@ -541,10 +618,6 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     Все карты
                 </Button>
                 <div className="mv-map__actions">
-                    <Button view="action" size="m" onClick={addMilestone} disabled={p.disabled}>
-                        <Icon data={Plus} size={16} />
-                        Новая веха
-                    </Button>
                     {p.canShare && (
                         <Button view={map.shareId ? 'outlined-info' : 'outlined'} size="m" onClick={() => setSharing(true)}>
                             <Icon data={Globe} size={16} />
@@ -573,26 +646,53 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 size="xl"
                 className="mv-map__title"
                 value={title}
-                onUpdate={setTitle}
+                onUpdate={(v) => {
+                    setTitle(v);
+                    if (v.trim()) auto.schedule({title: v.trim()});
+                }}
                 onBlur={() => {
-                    const t = title.trim();
-                    if (!t) setTitle(map.title);
-                    else if (t !== map.title) p.onSave({...map, title: t});
+                    if (!title.trim()) setTitle(map.title);
+                    auto.flush();
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                 aria-label="Название дорожной карты"
             />
+            <div className="mv-map__sub">
+                <Text variant="body-1" color="secondary">
+                    {SCALE_NAMES[map.scale]} · {periodText(map)}
+                </Text>
+                <SaveStatus state={auto.state} idle="" />
+            </div>
+            <section className="mv-field">
+                <Text variant="subheader-1">Описание</Text>
+                <DescriptionEditor
+                    key={map.id}
+                    value={map.description ?? ''}
+                    onChange={(v) => auto.schedule({description: v})}
+                    onSubmit={auto.flush}
+                    placeholder="Цель карты, контекст, что считаем успехом"
+                />
+            </section>
             <Text variant="body-1" color="secondary">
-                {SCALE_NAMES[map.scale]} · {periodText(map)}. Тяните полосу, чтобы сдвинуть веху, или её край, чтобы изменить срок.
+                Тяните полосу, чтобы сдвинуть веху, или её край, чтобы изменить срок.
             </Text>
 
             <Gantt
                 roadmap={map}
-                onChange={saveMilestone}
+                onChange={(m) =>
+                    auto.save({milestones: mapRef.current.milestones.map((x) => (x.id === m.id ? m : x))})
+                }
                 onOpen={(id) => p.onOpenMilestone(id)}
+                onAdd={p.disabled ? undefined : addMilestone}
                 meta={(m) => {
                     const ts = linked(m.id);
-                    return ts.length ? `задач закрыто: ${ts.filter((t) => t.done).length} из ${ts.length}` : null;
+                    const blockers = blockersOf(m, map.milestones);
+                    const lines = [
+                        m.owner && `👤 ${m.owner}`,
+                        blockers.length > 0 && `🔒 после ${blockers.map((b) => `«${b.title}»`).join(', ')}`,
+                        ts.length > 0 && `задач закрыто: ${ts.filter((t) => t.done).length} из ${ts.length}`,
+                    ].filter(Boolean) as string[];
+                    return lines.length ? lines.map((l) => <span key={l}>{l}</span>) : null;
                 }}
             />
 
@@ -607,10 +707,12 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     <MilestoneDetails
                         key={milestone.id}
                         milestone={milestone}
+                        all={map.milestones}
                         scale={map}
                         tasks={linked(milestone.id)}
                         linkable={p.tasks.filter((t) => !t.done && t.milestoneId !== milestone.id)}
-                        onSave={saveMilestone}
+                        onSave={(patch) => patchMilestone(milestone.id, patch)}
+                        onSaveAll={(list) => saveMap({milestones: list})}
                         onDelete={() => removeMilestone(milestone)}
                         onClose={() => p.onOpenMilestone(null)}
                         onOpenTask={p.onOpenTask}
@@ -625,7 +727,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 initial={map}
                 onClose={() => setSettings(false)}
                 onApply={(s) => {
-                    p.onSave({...map, ...s});
+                    saveMap(s);
+                    setTitle(s.title);
                     setSettings(false);
                 }}
             />
@@ -674,10 +777,12 @@ const shareUrl = (id: string) => `${window.location.origin}/?roadmap=${id}`;
 
 function MilestoneDetails({
     milestone,
+    all,
     scale,
     tasks,
     linkable,
     onSave,
+    onSaveAll,
     onDelete,
     onClose,
     onOpenTask,
@@ -685,10 +790,15 @@ function MilestoneDetails({
     onToggleTask,
 }: {
     milestone: Milestone;
+    /** все вехи карты — для блокировок */
+    all: Milestone[];
     scale: Pick<Roadmap, 'from' | 'to'>;
     tasks: Task[];
     linkable: Task[];
-    onSave: (m: Milestone) => void;
+    /** правка этой вехи; берёт свежую версию вехи и накладывает изменения */
+    onSave: (p: Partial<Milestone>) => Promise<void> | null;
+    /** правка сразу нескольких вех (блокировка сдвигает следующие) */
+    onSaveAll: (list: Milestone[]) => Promise<void> | null;
     onDelete: () => void;
     onClose: () => void;
     onOpenTask: (id: string) => void;
@@ -696,24 +806,42 @@ function MilestoneDetails({
     onToggleTask: (t: Task) => void;
 }) {
     const [title, setTitle] = React.useState(milestone.title);
-    const saveTitle = () => {
-        const t = title.trim();
-        if (!t) setTitle(milestone.title);
-        else if (t !== milestone.title) onSave({...milestone, title: t});
-    };
-    const min = fromDay(monthStart(scale.from));
-    const max = fromDay(monthEnd(scale.to));
+    const [owner, setOwner] = React.useState(milestone.owner ?? '');
+    const auto = useAutosave<Milestone>(onSave);
+    // сохранение нескольких вех показываем в том же статусе
+    const allAuto = useAutosave<{list: Milestone[]}>((p) => (p.list ? onSaveAll(p.list) : null));
+    const status = allAuto.state.kind !== 'idle' && auto.state.kind === 'idle' ? allAuto.state : auto.state;
+
+    const rs = monthStart(scale.from);
+    const re = monthEnd(scale.to);
+    const {lo, hi} = limits(milestone, all, rs, re);
     const setDate = (k: 'start' | 'end', v: string) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
-        const next = {...milestone, [k]: v};
+        // блокер не пускает начало раньше себя, а заблокированные — конец позже их начала
+        const d = k === 'start' ? Math.max(toDay(v), lo) : Math.min(toDay(v), hi);
+        const next = {start: milestone.start, end: milestone.end, [k]: fromDay(d)};
         // начало не позже конца: двигаем второй край следом
         if (next.start > next.end) {
-            if (k === 'start') next.end = v;
-            else next.start = v;
+            if (k === 'start') next.end = next.start;
+            else next.start = next.end;
         }
-        onSave(next);
+        auto.save(next);
     };
+
+    const blockers = blockersOf(milestone, all);
+    const blocks = dependentsOf(milestone, all);
+    const loop = downstream(milestone, all);
+    const candidates = all.filter((x) => x.id !== milestone.id && !milestone.blockedBy?.includes(x.id) && !loop.has(x.id));
+    const addBlocker = (id: string) => {
+        const list = all.map((x) => (x.id === milestone.id ? {...x, blockedBy: [...blockers.map((b) => b.id), id]} : x));
+        allAuto.save({list: pushLater(list, milestone.id, re)});
+    };
+    const removeBlocker = (id: string) => auto.save({blockedBy: blockers.map((b) => b.id).filter((x) => x !== id)});
     const open = tasks.filter((t) => !t.done).length;
+    const close = () => {
+        auto.flush();
+        onClose();
+    };
 
     return (
         <div className="mv-details mv-details_popup">
@@ -721,6 +849,7 @@ function MilestoneDetails({
                 <Label theme="info" size="s" icon={<Icon data={Flag} size={12} />}>
                     Веха
                 </Label>
+                <SaveStatus state={status} idle={datesText(milestone)} />
                 <div className="mv-details__actions">
                     <ActionTooltip title="Удалить веху">
                         <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить веху">
@@ -728,16 +857,7 @@ function MilestoneDetails({
                         </Button>
                     </ActionTooltip>
                 </div>
-                <Button
-                    view="flat"
-                    size="m"
-                    onClick={() => {
-                        saveTitle();
-                        onClose();
-                    }}
-                    aria-label="Закрыть"
-                    className="mv-details__close"
-                >
+                <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
                     <Icon data={Xmark} size={16} />
                 </Button>
             </div>
@@ -747,8 +867,14 @@ function MilestoneDetails({
                 size="xl"
                 className="mv-map__title"
                 value={title}
-                onUpdate={setTitle}
-                onBlur={saveTitle}
+                onUpdate={(v) => {
+                    setTitle(v);
+                    if (v.trim()) auto.schedule({title: v.trim()});
+                }}
+                onBlur={() => {
+                    if (!title.trim()) setTitle(milestone.title);
+                    auto.flush();
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                 placeholder="Название вехи"
                 aria-label="Название вехи"
@@ -761,15 +887,102 @@ function MilestoneDetails({
                         <Text variant="caption-2" color="secondary">
                             Начало
                         </Text>
-                        <input type="date" value={milestone.start} min={min} max={max} onChange={(e) => setDate('start', e.target.value)} />
+                        <input
+                            type="date"
+                            value={milestone.start}
+                            min={fromDay(lo)}
+                            max={fromDay(re)}
+                            onChange={(e) => setDate('start', e.target.value)}
+                        />
                     </label>
                     <label className="mv-date-field">
                         <Text variant="caption-2" color="secondary">
                             Конец
                         </Text>
-                        <input type="date" value={milestone.end} min={min} max={max} onChange={(e) => setDate('end', e.target.value)} />
+                        <input
+                            type="date"
+                            value={milestone.end}
+                            min={fromDay(rs)}
+                            max={fromDay(hi)}
+                            onChange={(e) => setDate('end', e.target.value)}
+                        />
                     </label>
                 </div>
+            </section>
+
+            <section className="mv-field">
+                <Text variant="subheader-1">Ответственный</Text>
+                <TextInput
+                    size="m"
+                    value={owner}
+                    onUpdate={(v) => {
+                        setOwner(v);
+                        auto.schedule({owner: v.trim()});
+                    }}
+                    onBlur={auto.flush}
+                    placeholder="Кто отвечает за веху"
+                    aria-label="Ответственный"
+                />
+            </section>
+
+            <section className="mv-field">
+                <Text variant="subheader-1">Блокируется вехами</Text>
+                {blockers.length > 0 ? (
+                    <ul className="mv-subtasks">
+                        {blockers.map((b) => (
+                            <li key={b.id} className="mv-subtask">
+                                <span className="mv-blocker__icon" aria-hidden="true">
+                                    <Icon data={Lock} size={14} />
+                                </span>
+                                <span className="mv-subtask__title mv-blocker__title">
+                                    {b.title}
+                                    <Text variant="caption-2" color="secondary">
+                                        {' '}
+                                        · до {fmtDayYear.format(new Date(toDay(b.end) * DAY))}
+                                    </Text>
+                                </span>
+                                <ActionTooltip title="Снять блокировку">
+                                    <Button
+                                        view="flat-secondary"
+                                        size="s"
+                                        className="mv-subtask__unlink"
+                                        onClick={() => removeBlocker(b.id)}
+                                        aria-label={`Снять блокировку «${b.title}»`}
+                                    >
+                                        <Icon data={LinkSlash} size={14} />
+                                    </Button>
+                                </ActionTooltip>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <Text color="secondary" className="mv-subtasks__empty">
+                        Веху можно начать, только когда закончатся вехи, которые её блокируют. Раньше них её не перетащить.
+                    </Text>
+                )}
+                {candidates.length > 0 && (
+                    <div>
+                        <Select
+                            value={[]}
+                            filterable={candidates.length > 7}
+                            filterPlaceholder="Найти веху"
+                            popupWidth={320}
+                            onUpdate={([v]) => v && addBlocker(v)}
+                            options={candidates.map((x) => ({value: x.id, content: x.title}))}
+                            renderControl={({ref, triggerProps}) => (
+                                <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
+                                    <Icon data={Lock} size={16} />
+                                    Добавить блокирующую веху
+                                </Button>
+                            )}
+                        />
+                    </div>
+                )}
+                {blocks.length > 0 && (
+                    <Text variant="caption-2" color="secondary">
+                        Эта веха блокирует: {blocks.map((x) => `«${x.title}»`).join(', ')}.
+                    </Text>
+                )}
             </section>
 
             <section className="mv-field">
