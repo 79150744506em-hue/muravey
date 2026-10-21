@@ -11,6 +11,7 @@ import {
     SegmentedRadioGroup,
     Select,
     Text,
+    TextArea,
     TextInput,
 } from '@gravity-ui/uikit';
 import {ArrowDownToLine, ArrowLeft, Flag, Gear, Globe, LinkSlash, Lock, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
@@ -313,9 +314,9 @@ export function Gantt({
                                     <div
                                         className={`mv-gantt__bar${readOnly ? ' mv-gantt__bar_ro' : ''}${
                                             p ? ' mv-gantt__bar_drag' : ''
-                                        }`}
+                                        }${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
                                         style={{left, width: w}}
-                                        title={`${m.title}: ${dates}`}
+                                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}`}
                                         onPointerDown={(ev) => down(ev, m, 'move')}
                                         onPointerMove={move}
                                         onPointerUp={() => up(m)}
@@ -334,7 +335,10 @@ export function Gantt({
                                                 aria-hidden="true"
                                             />
                                         )}
-                                        <span className="mv-gantt__dates">{dates}</span>
+                                        <span className="mv-gantt__dates">
+                                            {m.status === 'done' ? '✓ ' : m.status === 'risk' ? '⚠ ' : ''}
+                                            {dates}
+                                        </span>
                                         {!readOnly && (
                                             <span
                                                 className="mv-gantt__handle mv-gantt__handle_end"
@@ -783,9 +787,18 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
 }
 
 /** Подпись под вехой на ганте: ответственный, блокеры и что-то своё */
+/** статус вехи одной строкой: для подсказки на ганте */
+export function statusText(m: Pick<Milestone, 'status' | 'risk'>) {
+    if (m.status === 'done') return 'Готово';
+    if (m.status === 'risk') return m.risk?.trim() ? `Под риском: ${m.risk.trim()}` : 'Под риском';
+    return 'В работе';
+}
+
 function milestoneMeta(m: Milestone, all: Milestone[], extra?: string | null) {
     const blockers = blockersOf(m, all);
     const lines = [
+        m.status === 'done' && '✓ Готово',
+        m.status === 'risk' && `⚠ ${m.risk?.trim() || 'Под риском'}`,
         m.owner && `👤 ${m.owner}`,
         blockers.length > 0 && `🔒 после ${blockers.map((b) => `«${b.title}»`).join(', ')}`,
         extra,
@@ -827,6 +840,7 @@ function MilestoneDetails({
 }) {
     const [title, setTitle] = React.useState(milestone.title);
     const [owner, setOwner] = React.useState(milestone.owner ?? '');
+    const [risk, setRisk] = React.useState(milestone.risk ?? '');
     const auto = useAutosave<Milestone>(onSave);
     // сохранение нескольких вех показываем в том же статусе
     const allAuto = useAutosave<{list: Milestone[]}>((p) => (p.list ? onSaveAll(p.list) : null));
@@ -928,6 +942,35 @@ function MilestoneDetails({
                         />
                     </label>
                 </div>
+            </section>
+
+            <section className="mv-field">
+                <Text variant="subheader-1">Статус</Text>
+                <SegmentedRadioGroup
+                    size="m"
+                    value={milestone.status ?? 'work'}
+                    onUpdate={(v) => auto.save({status: v === 'work' ? undefined : (v as Milestone['status'])})}
+                    options={[
+                        {value: 'work', content: 'В работе'},
+                        {value: 'done', content: '✓ Готово'},
+                        {value: 'risk', content: '⚠ Под риском'},
+                    ]}
+                />
+                {milestone.status === 'risk' && (
+                    <TextArea
+                        size="m"
+                        minRows={2}
+                        maxRows={8}
+                        value={risk}
+                        onUpdate={(v) => {
+                            setRisk(v);
+                            auto.schedule({risk: v.trim()});
+                        }}
+                        onBlur={auto.flush}
+                        placeholder="В чём риск и что с ним делаем"
+                        aria-label="Описание риска"
+                    />
+                )}
             </section>
 
             <section className="mv-field">
@@ -1114,6 +1157,15 @@ function MilestoneView({milestone, all, onOpen}: {milestone: Milestone; all: Mil
             <section className="mv-field">
                 <Text variant="subheader-1">Сроки</Text>
                 <Text>{datesText(milestone)}</Text>
+            </section>
+            <section className="mv-field">
+                <Text variant="subheader-1">Статус</Text>
+                <Text>
+                    {milestone.status === 'done' ? '✓ Готово' : milestone.status === 'risk' ? '⚠ Под риском' : 'В работе'}
+                </Text>
+                {milestone.status === 'risk' && milestone.risk?.trim() && (
+                    <Text className="mv-risk-text">{milestone.risk.trim()}</Text>
+                )}
             </section>
             {milestone.owner && (
                 <section className="mv-field">
