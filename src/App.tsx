@@ -39,7 +39,7 @@ import type {Backend} from './store';
 import {pickBackend} from './store';
 import type {LoginOptions} from './store';
 import {burst} from './confetti';
-import {TAG_THEMES, dayKey, effectiveList, hungryDays, sortKey, uid} from './types';
+import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
 import type {ListKind, Tag, TagTheme, Task} from './types';
 import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
@@ -178,15 +178,8 @@ export function App() {
             const now = new Date().toISOString();
             const pr = backend.saveTask({...t, ...p, touchedAt: now});
             run(pr);
-            let fed = hungryDays(t) !== null;
-            // правка подзадачи кормит и её фокусную задачу
-            for (const pid of new Set([t.parentId, p.parentId])) {
-                const parent = pid ? tasksRef.current.find((x) => x.id === pid) : undefined;
-                if (!parent) continue;
-                if (hungryDays(parent) !== null) fed = true;
-                run(backend.saveTask({...parent, touchedAt: now}));
-            }
-            if (fed) setFeast((n) => n + 1);
+            // фокусную задачу кормят только её подзадачи
+            if (t.list !== 'focus' && hungerOf(t, tasksRef.current) !== null) setFeast((n) => n + 1);
             return pr;
         },
         [backend, run],
@@ -387,11 +380,6 @@ export function App() {
     };
     const addChild = (parentId: string, title: string) => {
         if (!backend) return;
-        const parent = byId.get(parentId);
-        if (parent) {
-            if (hungryDays(parent) !== null) setFeast((n) => n + 1);
-            run(backend.saveTask({...parent, touchedAt: new Date().toISOString()}));
-        }
         run(
             backend.saveTask({
                 id: uid(),
@@ -440,6 +428,7 @@ export function App() {
             parent={parentOf(t)}
             progress={progressOf(t)}
             onOpenParent={(id) => setOpenId(id)}
+            hungry={hungerOf(t, all)}
         />
     );
 
@@ -1200,6 +1189,7 @@ function TaskRow({
     parent,
     progress,
     onOpenParent,
+    hungry = null,
     ...a
 }: {
     task: Task;
@@ -1213,9 +1203,10 @@ function TaskRow({
     /** у фокусной задачи: сколько подзадач закрыто */
     progress?: {done: number; total: number};
     onOpenParent?: (id: string) => void;
+    /** сколько дней голодна обезьяна (null — сыта) */
+    hungry?: number | null;
 } & RowActions) {
     const drag = useSortableRow(task.id, sortable);
-    const hungry = hungryDays(task);
     const menu = [
         // в бэклоге для этого есть солнышко прямо на строке
         ...(list === 'focus' ? [{text: 'На сегодня', iconStart: <Icon data={Sun} size={16} />, action: a.onPlan}] : []),
@@ -1256,7 +1247,11 @@ function TaskRow({
                     {hungry !== null && (
                         <span
                             className="mv-hungry"
-                            title={`С задачей ничего не происходит ${hungry} ${daysWord(hungry)}. Покормите обезьяну: сделайте шаг по задаче — комментарий, правку описания, перенос.`}
+                            title={
+                                list === 'focus'
+                                    ? `Подзадача стоит без движения ${hungry} ${daysWord(hungry)}. Покормите обезьяну: сделайте шаг по голодной подзадаче.`
+                                    : `С задачей ничего не происходит ${hungry} ${daysWord(hungry)}. Покормите обезьяну: сделайте шаг по задаче — комментарий, правку описания, перенос.`
+                            }
                         >
                             <span className="mv-hungry__monkey" aria-hidden="true">
                                 🐒

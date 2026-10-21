@@ -71,3 +71,16 @@ export function hungryDays(t: Task, now = Date.now()): number | null {
     const days = Math.floor((now - lastTouch(t)) / DAY_MS);
     return days >= HUNGRY_DAYS ? days : null;
 }
+
+/** Голод с учётом фокусных задач: сама фокусная не голодает, она голодна, пока голодна хоть одна её подзадача. */
+export function hungerOf(t: Task, all: Task[], now = Date.now()): number | null {
+    if (t.done) return null;
+    if (t.list !== 'focus') return hungryDays(t, now);
+    let worst: number | null = null;
+    for (const k of all) {
+        if (k.parentId !== t.id || k.list === 'focus') continue;
+        const d = hungryDays(k, now);
+        if (d !== null && (worst === null || d > worst)) worst = d;
+    }
+    return worst;
+}
