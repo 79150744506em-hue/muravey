@@ -533,10 +533,19 @@ export function App() {
         />
     );
 
+    const tabs = [
+        {id: 'today', title: 'Сегодня', short: 'Сегодня', icon: Sun, counter: lists.today.length},
+        {id: 'focus', title: 'Фокус', short: 'Фокус', icon: Target, counter: lists.focus.length},
+        {id: 'backlog', title: 'Бэклог', short: 'Бэклог', icon: Tray, counter: lists.backlog.length},
+        {id: 'done', title: 'Выполненные', short: 'Готово', icon: CircleCheck, counter: undefined},
+        {id: 'roadmap', title: 'Roadmap', short: 'Roadmap', icon: BarsUnaligned, counter: undefined},
+        {id: 'stakeholders', title: 'Стейкхолдеры', short: 'Люди', icon: Persons, counter: undefined},
+    ];
+
     if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
     return (
-        <div className={`mv-app${view === 'backlog' || isMapView(view) ? ' mv-app_wide' : ''}`}>
+        <div className="mv-app">
             {feast > 0 && <MonkeyFeast key={feast} onEnd={() => setFeast(0)} />}
             <header className="mv-header">
                 <div className="mv-brand">
@@ -552,9 +561,9 @@ export function App() {
                     </div>
                 </div>
                 <div className="mv-header__actions">
-                    <Button view="outlined" size="m" onClick={() => setTagsOpen(true)}>
+                    <Button view="outlined" size="m" onClick={() => setTagsOpen(true)} className="mv-tags-btn" title="Теги">
                         <Icon data={TagIcon} size={16} />
-                        Теги
+                        <span className="mv-hide-phone">Теги</span>
                     </Button>
                     <BackupMenu
                         backend={backend}
@@ -568,24 +577,11 @@ export function App() {
             </header>
 
             <TabList value={view} onUpdate={(v) => switchView(v)} size="l" contentOverflow="scroll" className="mv-tabs">
-                <Tab value="today" icon={<Icon data={Sun} size={16} />} counter={lists.today.length}>
-                    Сегодня
-                </Tab>
-                <Tab value="focus" icon={<Icon data={Target} size={16} />} counter={lists.focus.length}>
-                    Фокус
-                </Tab>
-                <Tab value="backlog" icon={<Icon data={Tray} size={16} />} counter={lists.backlog.length}>
-                    Бэклог
-                </Tab>
-                <Tab value="done" icon={<Icon data={CircleCheck} size={16} />}>
-                    Выполненные
-                </Tab>
-                <Tab value="roadmap" icon={<Icon data={BarsUnaligned} size={16} />}>
-                    Roadmap
-                </Tab>
-                <Tab value="stakeholders" icon={<Icon data={Persons} size={16} />}>
-                    Стейкхолдеры
-                </Tab>
+                {tabs.map((t) => (
+                    <Tab key={t.id} value={t.id} icon={<Icon data={t.icon} size={16} />} counter={t.counter}>
+                        {t.title}
+                    </Tab>
+                ))}
             </TabList>
 
             {tags.length > 0 && !isMapView(view) && (
@@ -722,6 +718,30 @@ export function App() {
                     Задачи сохраняются в этом браузере.
                 </Text>
             )}
+
+            <nav className="mv-tabbar" aria-label="Разделы">
+                {tabs.map((t) => (
+                    <button
+                        key={t.id}
+                        type="button"
+                        className={`mv-tabbar__item${view === t.id ? ' mv-tabbar__item_active' : ''}`}
+                        aria-current={view === t.id ? 'page' : undefined}
+                        onClick={() => {
+                            if (view === t.id && !mapId) window.scrollTo({top: 0, behavior: 'smooth'});
+                            else {
+                                switchView(t.id);
+                                window.scrollTo(0, 0);
+                            }
+                        }}
+                    >
+                        <span className="mv-tabbar__icon">
+                            <Icon data={t.icon} size={22} />
+                            {Boolean(t.counter) && <span className="mv-tabbar__badge">{t.counter}</span>}
+                        </span>
+                        <span className="mv-tabbar__label">{t.short}</span>
+                    </button>
+                ))}
+            </nav>
 
             <Dialog
                 open={Boolean(cardTask)}
