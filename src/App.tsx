@@ -541,6 +541,10 @@ export function App() {
         {id: 'roadmap', title: 'Roadmap', short: 'Roadmap', icon: BarsUnaligned, counter: undefined},
         {id: 'stakeholders', title: 'Стейкхолдеры', short: 'Люди', icon: Persons, counter: undefined},
     ];
+    const viewTitle = tabs.find((t) => t.id === view)?.title;
+    React.useEffect(() => {
+        document.title = viewTitle ? `${viewTitle} – Муравей` : 'Задачи – Муравей';
+    }, [viewTitle]);
 
     if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
