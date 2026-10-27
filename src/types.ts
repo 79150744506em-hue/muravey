@@ -24,6 +24,8 @@ export interface Task {
     parentId?: string | null; // фокусная задача, для которой эта — подзадача
     touchedAt?: string | null; // последнее действие с задачей — им кормится обезьяна
     milestoneId?: string | null; // веха дорожной карты, к которой привязана задача
+    stakeholderId?: string | null; // стейкхолдер, с которым связана задача
+    dueDate?: string | null; // YYYY-MM-DD: до этого дня задача ждёт в бэклоге, в этот день она в «Сегодня»
 }
 
 export interface Tag {
@@ -69,6 +71,44 @@ export interface Roadmap {
     shareId?: string | null;
 }
 
+export type Attitude = 'ally' | 'neutral' | 'skeptic';
+export type ContactKind = 'meeting' | 'call' | 'message' | 'demo' | 'other';
+export type Outcome = 'good' | 'neutral' | 'bad';
+
+/** Запись в истории взаимодействий со стейкхолдером. */
+export interface Interaction {
+    id: string;
+    date: string; // YYYY-MM-DD
+    kind: ContactKind;
+    text: string;
+    outcome?: Outcome;
+    /** задача, после закрытия которой появилась запись */
+    taskId?: string;
+}
+
+export interface Stakeholder {
+    id: string;
+    name: string;
+    /** роль и компания или продукт группы */
+    role?: string;
+    contact?: string;
+    attitude?: Attitude;
+    description?: string;
+    /** место на матрице, от 0 до 1: интерес слева направо, влияние снизу вверх */
+    interest: number;
+    influence: number;
+    history: Interaction[];
+    createdAt: string;
+}
+
+/** Карта стейкхолдеров одного продукта. */
+export interface StakeholderMap {
+    id: string;
+    title: string;
+    stakeholders: Stakeholder[];
+    createdAt: string;
+}
+
 export const TAG_THEMES: TagTheme[] = ['info', 'success', 'warning', 'danger', 'utility', 'normal'];
 
 export function uid() {
@@ -82,6 +122,8 @@ export function dayKey(d = new Date()) {
 
 /** Задача «на сегодня» живёт только в свой день; на следующий день она снова в бэклоге. */
 export function effectiveList(t: Task, today: string): ListKind {
+    // задача с датой сама приходит в «Сегодня» в свой день, а на следующий возвращается в бэклог, как и все
+    if (t.list !== 'focus' && t.dueDate === today) return 'today';
     if (t.list === 'today' && t.plannedFor !== today) return 'backlog';
     return t.list;
 }
@@ -120,4 +162,14 @@ export function hungerOf(t: Task, all: Task[], now = Date.now()): number | null 
         if (d !== null && (worst === null || d > worst)) worst = d;
     }
     return worst;
+}
+
+/** Открытые задачи стейкхолдера; нет ни одной — стейкхолдер голоден, его пора покормить следующим контактом. */
+export const openTasksOf = (s: Pick<Stakeholder, 'id'>, all: Task[]) =>
+    all.filter((t) => t.stakeholderId === s.id && !t.done);
+
+export function addDays(day: string, n: number) {
+    const d = new Date(day + 'T12:00:00');
+    d.setDate(d.getDate() + n);
+    return dayKey(d);
 }

@@ -3,20 +3,21 @@ import {Button, Dialog, DropdownMenu, Icon} from '@gravity-ui/uikit';
 import {ArrowDownToLine, ArrowRightFromSquare, ArrowUpFromLine, Ellipsis} from '@gravity-ui/icons';
 
 import type {Backend} from './store';
-import type {Roadmap, Tag, Task} from './types';
+import type {Roadmap, StakeholderMap, Tag, Task} from './types';
 import {dayKey} from './types';
 
 interface Parsed {
     tasks: Task[];
     tags: Tag[];
     roadmaps: Roadmap[];
+    stakeholders: StakeholderMap[];
     newTasks: number;
     newTags: number;
 }
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 
-function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]} {
+function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]} {
     let data: unknown;
     try {
         data = JSON.parse(text);
@@ -37,7 +38,17 @@ function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadm
         (r): r is Roadmap =>
             isObj(r) && typeof r.id === 'string' && typeof r.title === 'string' && Array.isArray(r.milestones),
     );
-    if (tasks.length !== data.tasks.length || tags.length !== data.tags.length || roadmaps.length !== rawMaps.length) {
+    const rawPeople = Array.isArray(data.stakeholders) ? data.stakeholders : [];
+    const stakeholders = rawPeople.filter(
+        (m): m is StakeholderMap =>
+            isObj(m) && typeof m.id === 'string' && typeof m.title === 'string' && Array.isArray(m.stakeholders),
+    );
+    if (
+        tasks.length !== data.tasks.length ||
+        tags.length !== data.tags.length ||
+        roadmaps.length !== rawMaps.length ||
+        stakeholders.length !== rawPeople.length
+    ) {
         throw new Error('Часть записей в файле повреждена, загрузка отменена.');
     }
     // старые копии могли быть без каких-то полей — достраиваем значения по умолчанию
@@ -53,7 +64,7 @@ function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadm
         createdAt: new Date().toISOString(),
         ...t,
     }));
-    return {tasks: fixed, tags, roadmaps};
+    return {tasks: fixed, tags, roadmaps, stakeholders};
 }
 
 export function BackupMenu({
@@ -61,12 +72,14 @@ export function BackupMenu({
     tasks,
     tags,
     roadmaps,
+    stakeholders,
     onResult,
 }: {
     backend: Backend | null;
     tasks: Task[];
     tags: Tag[];
     roadmaps: Roadmap[];
+    stakeholders: StakeholderMap[];
     onResult: (r: {ok: boolean; message: string}) => void;
 }) {
     const fileRef = React.useRef<HTMLInputElement>(null);
@@ -74,7 +87,11 @@ export function BackupMenu({
     const [busy, setBusy] = React.useState(false);
 
     const download = () => {
-        const body = JSON.stringify({version: 1, exportedAt: new Date().toISOString(), tasks, tags, roadmaps}, null, 2);
+        const body = JSON.stringify(
+            {version: 1, exportedAt: new Date().toISOString(), tasks, tags, roadmaps, stakeholders},
+            null,
+            2,
+        );
         const url = URL.createObjectURL(new Blob([body], {type: 'application/json'}));
         const a = document.createElement('a');
         a.href = url;
@@ -104,12 +121,13 @@ export function BackupMenu({
         if (!pending || !backend) return;
         setBusy(true);
         try {
-            await backend.importAll(pending.tasks, pending.tags, pending.roadmaps);
+            await backend.importAll(pending.tasks, pending.tags, pending.roadmaps, pending.stakeholders);
             onResult({
                 ok: true,
                 message:
                     `Загружено: задач ${pending.tasks.length}, тегов ${pending.tags.length}` +
-                    (pending.roadmaps.length ? `, дорожных карт ${pending.roadmaps.length}.` : '.'),
+                    (pending.roadmaps.length ? `, дорожных карт ${pending.roadmaps.length}` : '') +
+                    (pending.stakeholders.length ? `, карт стейкхолдеров ${pending.stakeholders.length}.` : '.'),
             });
             setPending(null);
         } catch (e) {
@@ -169,7 +187,8 @@ export function BackupMenu({
                             В файле задач: {pending.tasks.length} (новых {pending.newTasks}, обновятся{' '}
                             {pending.tasks.length - pending.newTasks}), тегов: {pending.tags.length} (новых{' '}
                             {pending.newTags}, обновятся {pending.tags.length - pending.newTags})
-                            {pending.roadmaps.length > 0 && `, дорожных карт: ${pending.roadmaps.length}`}.
+                            {pending.roadmaps.length > 0 && `, дорожных карт: ${pending.roadmaps.length}`}
+                            {pending.stakeholders.length > 0 && `, карт стейкхолдеров: ${pending.stakeholders.length}`}.
                             <br />
                             <br />
                             Задачи и теги с теми же id перезапишутся версией из файла. Всё остальное останется как есть,

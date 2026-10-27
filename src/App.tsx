@@ -25,6 +25,8 @@ import {
     Flag,
     Link,
     LinkSlash,
+    Person,
+    Persons,
     Grip,
     Comment as CommentIcon,
     Plus,
@@ -42,16 +44,19 @@ import {pickBackend} from './store';
 import type {LoginOptions} from './store';
 import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
-import type {ListKind, Milestone, Roadmap, Tag, TagTheme, Task} from './types';
+import type {ListKind, Milestone, Roadmap, Stakeholder, StakeholderMap, Tag, TagTheme, Task} from './types';
 import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
 import {RoadmapsView, datesText} from './Roadmaps';
+import {ContactDialog, DueChip, StakeholdersView, findPerson, zoneName} from './Stakeholders';
 import {SaveStatus} from './SaveStatus';
 import {SortableList, useSortableRow} from './SortableList';
 import logo from './assets/logo.png';
 
-type View = ListKind | 'done' | 'roadmap';
+type View = ListKind | 'done' | 'roadmap' | 'stakeholders';
+// вкладки со своими сущностями, а не со списками задач
+const isMapView = (v: View): v is 'roadmap' | 'stakeholders' => v === 'roadmap' || v === 'stakeholders';
 
 const LIST_NAMES: Record<ListKind, string> = {today: 'Сегодня', focus: 'Фокус', backlog: 'Бэклог'};
 const THEME_NAMES: Record<TagTheme, string> = {
@@ -93,17 +98,24 @@ export function App() {
     const [tasks, setTasks] = React.useState<Task[] | null>(null);
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
-    // в адресе: #today, #roadmap или #roadmap/<id карты>
+    // в адресе: #today, #roadmap, #roadmap/<id карты> или #stakeholders/<id карты>
     const [view, setView] = React.useState<View>(() => {
         const h = window.location.hash.slice(1).split('/')[0];
-        return (['today', 'focus', 'backlog', 'done', 'roadmap'] as View[]).includes(h as View) ? (h as View) : 'today';
+        return (['today', 'focus', 'backlog', 'done', 'roadmap', 'stakeholders'] as View[]).includes(h as View)
+            ? (h as View)
+            : 'today';
     });
     const [roadmaps, setRoadmaps] = React.useState<Roadmap[] | null>(null);
+    const [peopleMaps, setPeopleMaps] = React.useState<StakeholderMap[] | null>(null);
+    // открытая карта: дорожная или карта стейкхолдеров, смотря какая вкладка
     const [mapId, setMapId] = React.useState<string | null>(() => {
         const [h, id] = window.location.hash.slice(1).split('/');
-        return h === 'roadmap' && id ? id : null;
+        return (h === 'roadmap' || h === 'stakeholders') && id ? id : null;
     });
     const [milestoneId, setMilestoneId] = React.useState<string | null>(null);
+    const [personId, setPersonId] = React.useState<string | null>(null);
+    // закрыли задачу стейкхолдера — спрашиваем «Как прошло?»
+    const [asked, setAsked] = React.useState<Task | null>(null);
     const [openId, setOpenId] = React.useState<string | null>(null);
     // новая задача: черновик живёт только в окне, в хранилище попадает, как только появится название
     const [draft, setDraft] = React.useState<Task | null>(null);
@@ -147,6 +159,8 @@ export function App() {
     tasksRef.current = tasks ?? [];
     const tagsRef = React.useRef<Tag[]>([]);
     tagsRef.current = tags;
+    const peopleRef = React.useRef<StakeholderMap[]>([]);
+    peopleRef.current = peopleMaps ?? [];
 
     React.useEffect(() => {
         let unsub = () => {};
@@ -155,7 +169,7 @@ export function App() {
             if (!alive) return;
             setLogin(null);
             setBackend(b);
-            unsub = b.subscribe(setTasks, setTags, setError, setRoadmaps);
+            unsub = b.subscribe(setTasks, setTags, setError, setRoadmaps, setPeopleMaps);
         };
         pickBackend().then((r) => {
             if (!alive) return;
@@ -234,7 +248,15 @@ export function App() {
     // при переносе в другой список ручной порядок сбрасывается: в «Сегодня» и «Фокус» задача встаёт вниз, в бэклоге — по дате
     const planToday = (id: string) =>
         patch(id, {list: 'today', plannedFor: today, plannedAt: new Date().toISOString(), order: null});
-    const toBacklog = (id: string) => patch(id, {list: 'backlog', plannedFor: null, plannedAt: null, order: null});
+    // задача с датой на сегодня стоит в «Сегодня» сама; убрать её в бэклог — значит снять дату
+    const toBacklog = (id: string) =>
+        patch(id, {
+            list: 'backlog',
+            plannedFor: null,
+            plannedAt: null,
+            order: null,
+            ...(tasksRef.current.find((x) => x.id === id)?.dueDate === today ? {dueDate: null} : {}),
+        });
     // фокусная задача всегда главная — сама подзадачей быть не может
     const toFocus = (id: string) =>
         patch(id, {list: 'focus', plannedFor: null, plannedAt: null, order: null, parentId: null});
@@ -276,6 +298,8 @@ export function App() {
         const moved = ids.map((x) => byId.get(x)).filter(Boolean) as Task[];
         const t = byId.get(id);
         if (!t) return;
+        const dueToday = t.list !== 'focus' && t.dueDate === today;
+        if (col === 'backlog' && dueToday) return placeIn(col, moved, id, {...listFields('backlog'), dueDate: null});
         const sameList = col === 'today' ? t.list === 'today' && t.plannedFor === today : t.list === 'backlog';
         placeIn(col, moved, id, sameList ? {} : listFields(col));
     };
@@ -292,6 +316,7 @@ export function App() {
         window.setTimeout(() => {
             patch(id, {done: true, doneAt: new Date().toISOString()});
             if (t) undoable(`Задача «${t.title}» закрыта`, () => patch(id, {done: false, doneAt: null}));
+            if (t) askHow(t);
             window.setTimeout(
                 () =>
                     setCompleting((s) => {
@@ -305,6 +330,16 @@ export function App() {
     };
 
     const reopen = (id: string) => patch(id, {done: false, doneAt: null});
+    // галочка в списках внутри карточек (подзадачи, задачи вехи и стейкхолдера)
+    const toggleDone = (c: Task) => {
+        if (c.done) return patch(c.id, {done: false, doneAt: null});
+        const pr = patch(c.id, {done: true, doneAt: new Date().toISOString()});
+        askHow(c);
+        return pr;
+    };
+    const askHow = (t: Task) => {
+        if (findPerson(peopleRef.current, t.stakeholderId)) setAsked(t);
+    };
 
     // удаление без подтверждения: сразу убираем, а в уведомлении можно вернуть
     const removeTask = (id: string) => {
@@ -342,6 +377,7 @@ export function App() {
         setView(v as View);
         setMapId(map);
         setMilestoneId(null);
+        setPersonId(null);
         try {
             history.replaceState(null, '', '#' + v + (map ? '/' + map : ''));
         } catch {
@@ -354,6 +390,47 @@ export function App() {
         run(backend.removeRoadmap(r.id));
         undoable(`Дорожная карта «${r.title}» удалена`, () => run(backend.saveRoadmap(r)));
     };
+    const removePeopleMap = (m: StakeholderMap) => {
+        if (!backend) return;
+        run(backend.removeStakeholderMap(m.id));
+        undoable(`Карта «${m.title}» удалена`, () => run(backend.saveStakeholderMap(m)));
+    };
+    const savePeopleMap = (m: StakeholderMap) => {
+        if (!backend) return null;
+        const pr = backend.saveStakeholderMap(m);
+        run(pr);
+        return pr;
+    };
+    // покормили стейкхолдера: задача на следующий контакт ждёт в бэклоге до своего дня
+    const feedPerson = (s: Stakeholder, title: string, date: string) => {
+        if (!backend) return;
+        run(
+            backend.saveTask({
+                id: uid(),
+                title,
+                description: '',
+                list: 'backlog',
+                plannedFor: null,
+                plannedAt: null,
+                tagIds: [],
+                comments: [],
+                done: false,
+                doneAt: null,
+                createdAt: new Date().toISOString(),
+                stakeholderId: s.id,
+                dueDate: date,
+            }),
+        );
+        setFeast((n) => n + 1);
+    };
+    // все стейкхолдеры для поля «Стейкхолдер» в карточке задачи
+    const people = (peopleMaps ?? []).flatMap((map) => map.stakeholders.map((s) => ({map, s})));
+    const openPerson = (mapId: string, id: string) => {
+        closeCard();
+        switchView('stakeholders', mapId);
+        setPersonId(id);
+    };
+    const askedPerson = asked ? findPerson(peopleMaps ?? [], asked.stakeholderId) : undefined;
     // все вехи для поля «Веха» в карточке задачи
     const milestones = (roadmaps ?? []).flatMap((map) => map.milestones.map((m) => ({map, m})));
     const milestoneOf = (t: Task) => (t.milestoneId ? milestones.find((x) => x.m.id === t.milestoneId) : undefined);
@@ -377,7 +454,7 @@ export function App() {
         backlog: byList('backlog').sort((a, b) => sortKey(a, 'backlog') - sortKey(b, 'backlog')),
         done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
     };
-    const shown = view === 'roadmap' ? [] : lists[view];
+    const shown = isMapView(view) ? [] : lists[view];
     // на сегодня пусто (и фильтр ничего не прячет) — показываем большой экран «Спланировать день»
     const emptyDay = view === 'today' && tasks !== null && lists.today.length === 0 && !filtering;
     const tagMap = new Map(tags.map((t) => [t.id, t]));
@@ -450,13 +527,16 @@ export function App() {
             progress={progressOf(t)}
             onOpenParent={(id) => setOpenId(id)}
             hungry={hungerOf(t, all)}
+            today={today}
+            person={findPerson(peopleMaps ?? [], t.stakeholderId)}
+            onOpenPerson={openPerson}
         />
     );
 
     if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
     return (
-        <div className={`mv-app${view === 'backlog' || view === 'roadmap' ? ' mv-app_wide' : ''}`}>
+        <div className={`mv-app${view === 'backlog' || isMapView(view) ? ' mv-app_wide' : ''}`}>
             {feast > 0 && <MonkeyFeast key={feast} onEnd={() => setFeast(0)} />}
             <header className="mv-header">
                 <div className="mv-brand">
@@ -481,6 +561,7 @@ export function App() {
                         tasks={all}
                         tags={tags}
                         roadmaps={roadmaps ?? []}
+                        stakeholders={peopleMaps ?? []}
                         onResult={(r) => (r.ok ? setNotice(r.message) : setError(r.message))}
                     />
                 </div>
@@ -502,9 +583,12 @@ export function App() {
                 <Tab value="roadmap" icon={<Icon data={BarsUnaligned} size={16} />}>
                     Roadmap
                 </Tab>
+                <Tab value="stakeholders" icon={<Icon data={Persons} size={16} />}>
+                    Стейкхолдеры
+                </Tab>
             </TabList>
 
-            {tags.length > 0 && view !== 'roadmap' && (
+            {tags.length > 0 && !isMapView(view) && (
                 <TagFilter tags={sortedTags} value={activeFilter} onChange={setTagFilter} />
             )}
 
@@ -568,9 +652,29 @@ export function App() {
                             setOpenId(id);
                         }}
                         onLinkTask={(id, m) => patch(id, {milestoneId: m})}
-                        onToggleTask={(c) =>
-                            patch(c.id, c.done ? {done: false, doneAt: null} : {done: true, doneAt: new Date().toISOString()})
-                        }
+                        onToggleTask={toggleDone}
+                        undoable={undoable}
+                    />
+                ) : view === 'stakeholders' ? (
+                    <StakeholdersView
+                        maps={peopleMaps}
+                        tasks={all}
+                        today={today}
+                        mapId={mapId}
+                        onOpenMap={(id) => switchView('stakeholders', id)}
+                        personId={personId}
+                        onOpenPerson={setPersonId}
+                        disabled={!backend}
+                        onSave={savePeopleMap}
+                        onRemove={removePeopleMap}
+                        onOpenTask={(id) => {
+                            setPersonId(null);
+                            setDraft(null);
+                            setOpenId(id);
+                        }}
+                        onLinkTask={(id, sid) => patch(id, {stakeholderId: sid})}
+                        onToggleTask={toggleDone}
+                        onFeed={feedPerson}
                         undoable={undoable}
                     />
                 ) : view === 'backlog' && tasks !== null ? (
@@ -668,9 +772,7 @@ export function App() {
                             setOpenId(id);
                         }}
                         onLinkChild={(id, parentId) => patch(id, {parentId})}
-                        onToggleChild={(c) =>
-                            patch(c.id, c.done ? {done: false, doneAt: null} : {done: true, doneAt: new Date().toISOString()})
-                        }
+                        onToggleChild={toggleDone}
                         onAddChild={(title) => addChild(cardTask.id, title)}
                         milestones={milestones}
                         milestone={milestoneOf(cardTask)}
@@ -679,6 +781,10 @@ export function App() {
                             switchView('roadmap', mapId);
                             setMilestoneId(id);
                         }}
+                        today={today}
+                        people={people}
+                        person={findPerson(peopleMaps ?? [], cardTask.stakeholderId)}
+                        onOpenPerson={openPerson}
                         parentProgress={(() => {
                             const p = parentOf(cardTask);
                             return p ? progressOf(p) : undefined;
@@ -694,6 +800,30 @@ export function App() {
                 usage={(id) => all.filter((t) => t.tagIds.includes(id)).length}
                 onSave={(t) => backend && run(backend.saveTag(t))}
                 onRemove={removeTag}
+            />
+
+            <ContactDialog
+                person={askedPerson?.s ?? null}
+                today={today}
+                after={asked ?? undefined}
+                hasOtherTasks={Boolean(
+                    asked && all.some((t) => t.stakeholderId === asked.stakeholderId && !t.done && t.id !== asked.id),
+                )}
+                onClose={() => setAsked(null)}
+                onDone={(r) => {
+                    const found = asked && findPerson(peopleRef.current, asked.stakeholderId);
+                    if (found && r.entry) {
+                        const entry = r.entry;
+                        savePeopleMap({
+                            ...found.map,
+                            stakeholders: found.map.stakeholders.map((x) =>
+                                x.id === found.s.id ? {...x, history: [...x.history, entry]} : x,
+                            ),
+                        });
+                    }
+                    if (found && r.next) feedPerson(found.s, r.next.title, r.next.date);
+                    setAsked(null);
+                }}
             />
 
         </div>
@@ -1086,8 +1216,8 @@ function PlanHero({hasBacklog, disabled, onPlan}: {hasBacklog: boolean; disabled
     );
 }
 
-function EmptyState({view, hasBacklog}: {view: Exclude<View, 'roadmap'>; hasBacklog: boolean}) {
-    const text: Record<Exclude<View, 'roadmap'>, string> = {
+function EmptyState({view, hasBacklog}: {view: Exclude<View, 'roadmap' | 'stakeholders'>; hasBacklog: boolean}) {
+    const text: Record<Exclude<View, 'roadmap' | 'stakeholders'>, string> = {
         today: hasBacklog
             ? 'На сегодня пока ничего. Возьмите задачи из бэклога.'
             : 'На сегодня пока ничего. Добавьте задачи в бэклог, а потом запланируйте их сюда.',
@@ -1252,6 +1382,9 @@ function TaskRow({
     progress,
     onOpenParent,
     hungry = null,
+    today,
+    person,
+    onOpenPerson,
     ...a
 }: {
     task: Task;
@@ -1267,6 +1400,10 @@ function TaskRow({
     onOpenParent?: (id: string) => void;
     /** сколько дней голодна обезьяна (null — сыта) */
     hungry?: number | null;
+    today: string;
+    /** стейкхолдер, с которым связана задача */
+    person?: {map: StakeholderMap; s: Stakeholder};
+    onOpenPerson: (mapId: string, id: string) => void;
 } & RowActions) {
     const drag = useSortableRow(task.id, sortable);
     const menu = [
@@ -1333,6 +1470,21 @@ function TaskRow({
                         >
                             <Icon data={Target} size={12} />
                             <span>{parent.title}</span>
+                        </button>
+                    )}
+                    {task.dueDate && !task.done && <DueChip day={task.dueDate} today={today} />}
+                    {person && (
+                        <button
+                            type="button"
+                            className="mv-parent-chip mv-parent-chip_person"
+                            title="Стейкхолдер — открыть карточку"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenPerson(person.map.id, person.s.id);
+                            }}
+                        >
+                            <Icon data={Person} size={12} />
+                            <span>{person.s.name || 'Без имени'}</span>
                         </button>
                     )}
                     {progress && (
@@ -1411,6 +1563,10 @@ function TaskDetails({
     milestones,
     milestone,
     onOpenMilestone,
+    today,
+    people,
+    person,
+    onOpenPerson,
     ...a
 }: {
     task: Task;
@@ -1441,6 +1597,11 @@ function TaskDetails({
     milestones: {map: Roadmap; m: Milestone}[];
     milestone?: {map: Roadmap; m: Milestone};
     onOpenMilestone: (mapId: string, id: string) => void;
+    today: string;
+    /** все стейкхолдеры всех карт — к любому можно привязать задачу */
+    people: {map: StakeholderMap; s: Stakeholder}[];
+    person?: {map: StakeholderMap; s: Stakeholder};
+    onOpenPerson: (mapId: string, id: string) => void;
 } & Omit<RowActions, 'onComplete'>) {
     const [childTitle, setChildTitle] = React.useState('');
     const [title, setTitle] = React.useState(task.title);
@@ -1615,6 +1776,94 @@ function TaskDetails({
                     onSubmit={flushAndClose}
                 />
             </section>
+
+            {list !== 'focus' && !task.done && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Дата</Text>
+                    <div className="mv-due-field">
+                        <input
+                            type="date"
+                            className="mv-due-field__input"
+                            value={task.dueDate ?? ''}
+                            onChange={(e) => save({dueDate: e.target.value || null})}
+                            aria-label="Дата задачи"
+                        />
+                        {task.dueDate ? (
+                            <>
+                                <Text variant="caption-2" color="secondary">
+                                    {task.dueDate > today
+                                        ? 'До этого дня задача ждёт в бэклоге, в этот день сама придёт в «Сегодня».'
+                                        : task.dueDate === today
+                                          ? 'Задача на сегодня.'
+                                          : 'Дата прошла.'}
+                                </Text>
+                                <ActionTooltip title="Убрать дату">
+                                    <Button view="flat-secondary" size="s" onClick={() => save({dueDate: null})} aria-label="Убрать дату">
+                                        <Icon data={Xmark} size={14} />
+                                    </Button>
+                                </ActionTooltip>
+                            </>
+                        ) : (
+                            <Text variant="caption-2" color="secondary">
+                                Без даты. С датой задача сама придёт в «Сегодня» в свой день.
+                            </Text>
+                        )}
+                    </div>
+                </section>
+            )}
+
+            {(people.length > 0 || person) && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Стейкхолдер</Text>
+                    {person ? (
+                        <div className="mv-parent-card mv-parent-card_person">
+                            <button
+                                type="button"
+                                className="mv-parent-card__main"
+                                onClick={() => onOpenPerson(person.map.id, person.s.id)}
+                            >
+                                <span className="mv-parent-card__icon">
+                                    <Icon data={Person} size={16} />
+                                </span>
+                                <span className="mv-parent-card__text">
+                                    <span className="mv-parent-card__title">{person.s.name || 'Без имени'}</span>
+                                    <Text variant="caption-2" color="secondary">
+                                        {[person.map.title, person.s.role, zoneName(person.s)].filter(Boolean).join(' · ')}
+                                    </Text>
+                                </span>
+                            </button>
+                            <ActionTooltip title="Отвязать от стейкхолдера">
+                                <Button view="flat-secondary" size="m" onClick={() => save({stakeholderId: null})} aria-label="Отвязать от стейкхолдера">
+                                    <Icon data={LinkSlash} size={16} />
+                                </Button>
+                            </ActionTooltip>
+                        </div>
+                    ) : (
+                        <div>
+                            <Select
+                                id="mv-task-person"
+                                value={[]}
+                                filterable={people.length > 7}
+                                filterPlaceholder="Найти стейкхолдера"
+                                popupWidth={320}
+                                onUpdate={([v]) => v && save({stakeholderId: v})}
+                                options={[...new Set(people.map((x) => x.map))].map((map) => ({
+                                    label: map.title,
+                                    options: people
+                                        .filter((x) => x.map === map)
+                                        .map((x) => ({value: x.s.id, content: x.s.name || 'Без имени', text: x.s.name})),
+                                }))}
+                                renderControl={({ref, triggerProps}) => (
+                                    <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
+                                        <Icon data={Person} size={16} />
+                                        Привязать к стейкхолдеру
+                                    </Button>
+                                )}
+                            />
+                        </div>
+                    )}
+                </section>
+            )}
 
             {list !== 'focus' && (focusTasks.length > 0 || parent) && (
                 <section className="mv-field">
