@@ -1,6 +1,6 @@
 /* Муравей: одна колонка списка на основе токенов Gravity UI */
 :root {
-    --mv-max: 760px;
+    --mv-max: 1080px;
     --mv-ok: var(--g-color-base-positive-heavy, #3bc935);
 }
 html,
@@ -2510,4 +2510,203 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     flex-wrap: wrap;
     align-items: center;
     gap: var(--g-spacing-2);
+}
+
+/* ---------- телефон: как приложение ---------- */
+.mv-tabbar {
+    display: none;
+}
+@media (max-width: 640px) {
+    :root {
+        --mv-tabbar-h: 60px;
+    }
+    html {
+        -webkit-text-size-adjust: 100%;
+    }
+    body {
+        -webkit-tap-highlight-color: transparent;
+        overscroll-behavior-y: none;
+    }
+    .mv-hide-phone {
+        display: none;
+    }
+    .mv-header .mv-tags-btn {
+        width: 28px;
+        padding: 0;
+        --g-button-padding: 0;
+    }
+    .mv-header .mv-tags-btn .g-button__text {
+        display: none;
+    }
+    .mv-app {
+        padding-top: 0;
+        padding-bottom: calc(var(--mv-tabbar-h) + env(safe-area-inset-bottom) + var(--g-spacing-6));
+        padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right));
+    }
+
+    /* шапка: одна строка, прилипает сверху */
+    .mv-header {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        flex-wrap: nowrap;
+        margin-inline: -16px;
+        padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+        background: color-mix(in srgb, var(--g-color-base-background) 86%, transparent);
+        -webkit-backdrop-filter: saturate(180%) blur(16px);
+        backdrop-filter: saturate(180%) blur(16px);
+        border-bottom: 1px solid var(--g-color-line-generic);
+    }
+    .mv-mark {
+        width: 34px;
+        height: 34px;
+    }
+    .mv-title {
+        font-size: 18px;
+        line-height: 22px;
+    }
+    .mv-date {
+        font-size: 12px;
+        line-height: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mv-brand > div {
+        min-width: 0;
+    }
+
+    /* вкладки уезжают вниз */
+    .mv-app .mv-tabs {
+        display: none;
+    }
+    .mv-tabbar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 900;
+        display: flex;
+        padding: 4px max(4px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left));
+        background: color-mix(in srgb, var(--g-color-base-background) 88%, transparent);
+        -webkit-backdrop-filter: saturate(180%) blur(18px);
+        backdrop-filter: saturate(180%) blur(18px);
+        border-top: 1px solid var(--g-color-line-generic);
+        user-select: none;
+        -webkit-user-select: none;
+    }
+    .mv-tabbar__item {
+        flex: 1 1 0;
+        min-width: 0;
+        height: var(--mv-tabbar-h);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--g-color-text-secondary);
+        font: inherit;
+        cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .mv-tabbar__icon {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 52px;
+        height: 30px;
+        border-radius: 15px;
+        transition:
+            background 0.2s,
+            transform 0.15s;
+    }
+    .mv-tabbar__item:active .mv-tabbar__icon {
+        transform: scale(0.88);
+    }
+    .mv-tabbar__item_active {
+        color: var(--g-color-text-primary);
+    }
+    .mv-tabbar__item_active .mv-tabbar__icon {
+        background: var(--g-color-base-brand);
+        color: var(--g-color-text-brand-contrast);
+    }
+    .mv-tabbar__label {
+        max-width: 100%;
+        font-size: 11px;
+        line-height: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mv-tabbar__badge {
+        position: absolute;
+        top: -3px;
+        right: 4px;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        box-sizing: border-box;
+        border-radius: 9px;
+        background: var(--g-color-base-danger-heavy);
+        color: #fff;
+        font-size: 11px;
+        line-height: 18px;
+        font-weight: 600;
+        text-align: center;
+        box-shadow: 0 0 0 2px var(--g-color-base-background);
+    }
+
+    /* окна выезжают снизу листом */
+    .g-modal .g-modal__content-aligner {
+        align-items: flex-end;
+    }
+    .g-modal .g-modal__content {
+        --g-modal-margin: 0;
+        width: 100vw;
+        max-width: 100vw;
+        max-height: calc(100dvh - env(safe-area-inset-top) - 24px);
+        border-radius: 20px 20px 0 0;
+        clip-path: inset(0 round 20px 20px 0 0);
+        padding-bottom: env(safe-area-inset-bottom);
+        box-sizing: border-box;
+    }
+    .g-modal .g-modal__content::before {
+        content: '';
+        display: block;
+        width: 36px;
+        height: 5px;
+        margin: 8px auto 0;
+        border-radius: 3px;
+        background: var(--g-color-line-generic-active);
+    }
+    .g-modal[data-floating-ui-status='initial'] .g-modal__content,
+    .g-modal[data-floating-ui-status='close'] .g-modal__content {
+        transform: translateY(100%);
+    }
+    .g-modal[data-floating-ui-status='open'] .g-modal__content,
+    .g-modal[data-floating-ui-status='close'] .g-modal__content {
+        transition:
+            height 350ms ease-in-out,
+            transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    /* всплывашки и обезьяна над нижней панелью */
+    .g-toaster {
+        bottom: calc(var(--mv-tabbar-h) + env(safe-area-inset-bottom) + 8px) !important;
+    }
+    .mv-feast {
+        bottom: calc(var(--mv-tabbar-h) + env(safe-area-inset-bottom) + 16px);
+    }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+    .g-modal[data-floating-ui-status='initial'] .g-modal__content,
+    .g-modal[data-floating-ui-status='close'] .g-modal__content {
+        transform: none;
+    }
 }
