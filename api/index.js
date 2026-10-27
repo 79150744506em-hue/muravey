@@ -1,7 +1,7 @@
 // Серверная часть Муравья: одна функция Yandex Cloud Functions за API-шлюзом.
 // Данные лежат в Object Storage:
 //   accounts/<sha256 почты>.json — аккаунт {id, email, pass?, google?}
-//   users/<id>/state.json        — задачи, теги и дорожные карты пользователя {tasks: [], tags: [], roadmaps: []}
+//   users/<id>/state.json        — задачи, теги, дорожные карты и карты стейкхолдеров {tasks: [], tags: [], roadmaps: [], stakeholders: []}
 //   shares/<ключ>.json           — публичная ссылка на дорожную карту {u: id пользователя, r: id карты}
 const crypto = require('node:crypto');
 
@@ -204,7 +204,7 @@ async function handle(req, headers, iam) {
     const uid = readToken(auth.replace(/^Bearer\s+/i, ''));
     if (!uid) throw fail(401, 'unauthorized');
 
-    const state = {tasks: [], tags: [], roadmaps: [], ...(await readJson(iam, stateKey(uid)))};
+    const state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], ...(await readJson(iam, stateKey(uid)))};
     if (req.action === 'state') return {...state, token: issueToken(uid)};
     const findMap = (id) => {
         const map = state.roadmaps.find((r) => r.id === id);
@@ -237,6 +237,13 @@ async function handle(req, headers, iam) {
             state.roadmaps = state.roadmaps.filter((r) => r.id !== req.id);
             break;
         }
+        case 'saveStakeholderMap':
+            if (!isObj(req.item)) throw fail(400, 'bad_item');
+            state.stakeholders = upsert(state.stakeholders, req.item);
+            break;
+        case 'removeStakeholderMap':
+            state.stakeholders = state.stakeholders.filter((m) => m.id !== req.id);
+            break;
         case 'shareRoadmap': {
             const map = findMap(req.id);
             if (!map.shareId) {
@@ -256,6 +263,7 @@ async function handle(req, headers, iam) {
             for (const t of req.tasks) if (isObj(t)) state.tasks = upsert(state.tasks, t);
             for (const t of req.tags) if (isObj(t)) state.tags = upsert(state.tags, t);
             for (const r of req.roadmaps || []) if (isObj(r)) state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, r));
+            for (const m of req.stakeholders || []) if (isObj(m)) state.stakeholders = upsert(state.stakeholders, m);
             break;
         default:
             throw fail(400, 'unknown_action');
