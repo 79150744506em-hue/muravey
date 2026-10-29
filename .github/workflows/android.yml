@@ -1,0 +1,90 @@
+name: Android app
+
+# Собирает Муравья как Android-приложение (Trusted Web Activity: сайт в Chrome без адресной строки).
+# Из main готовый .apk выкладывается в релиз «Android-приложение»; из PR — только в артефакты запуска.
+on:
+  push:
+    branches: [main]
+    paths: [android/**, public/**, .github/workflows/android.yml]
+  pull_request:
+    paths: [android/**, public/**, .github/workflows/android.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build site (for icons)
+        run: |
+          npm ci
+          npm run build
+
+      - name: Generate Android project
+        run: |
+          npm install --no-save @bubblewrap/core@1.27.0
+          (cd dist && python3 -m http.server 8765 >/dev/null 2>&1 &)
+          sleep 2
+          node android/generate.mjs "$RUNNER_TEMP/twa" "$GITHUB_RUN_NUMBER"
+
+      - name: Build APK
+        working-directory: ${{ runner.temp }}/twa
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+
+      - name: Sign APK
+        working-directory: ${{ runner.temp }}/twa
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.jks
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # проверка сборки без ключа: приложение откроется с адресной строкой, сайт его не узнает
+            echo "::warning title=Нет ключа подписи::APK подписан временным ключом, только для проверки сборки"
+            ANDROID_KEYSTORE_PASSWORD=temporary
+            keytool -genkeypair -keystore release.jks -alias muravey -keyalg RSA -keysize 2048 -validity 1 \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEYSTORE_PASSWORD" -dname "CN=Muravey test"
+          else
+            echo "::error title=Нет ключа подписи::Добавьте секреты ANDROID_KEYSTORE_BASE64 и ANDROID_KEYSTORE_PASSWORD"
+            exit 1
+          fi
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks release.jks --ks-key-alias muravey \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" --key-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --out "$RUNNER_TEMP/muravey.apk" aligned.apk
+          "$BT/apksigner" verify --print-certs "$RUNNER_TEMP/muravey.apk" | grep -i sha-256
+          rm -f release.jks
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muravey-apk
+          path: ${{ runner.temp }}/muravey.apk
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android --yes --cleanup-tag 2>/dev/null || true
+          gh release create android "$RUNNER_TEMP/muravey.apk" --target "$GITHUB_SHA" \
+            --title "Android-приложение" \
+            --notes "Откройте эту страницу на телефоне, скачайте muravey.apk и установите. Новая версия ставится поверх старой, задачи сохраняются."

@@ -22,6 +22,11 @@ icon.type = 'image/png';
 icon.href = logo;
 document.head.appendChild(icon);
 
+// установка на телефон как приложение: офлайн-кэш страницы (на localhost при разработке не нужен)
+if ('serviceWorker' in navigator && !import.meta.env.DEV) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+
 function hostTheme(): Theme {
     const t = document.documentElement.getAttribute('data-theme');
     return t === 'dark' || t === 'light' ? t : 'system';

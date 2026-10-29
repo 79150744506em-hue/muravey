@@ -17,6 +17,55 @@ paths:
         bucket: __BUCKET__
         object: privacy.html
         service_account_id: __SA_ID__
+  /manifest.webmanifest:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: manifest.webmanifest
+        service_account_id: __SA_ID__
+  /sw.js:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: sw.js
+        service_account_id: __SA_ID__
+  /icon-192.png:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: icon-192.png
+        service_account_id: __SA_ID__
+  /icon-512.png:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: icon-512.png
+        service_account_id: __SA_ID__
+  /icon-maskable-512.png:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: icon-maskable-512.png
+        service_account_id: __SA_ID__
+  /apple-touch-icon.png:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: apple-touch-icon.png
+        service_account_id: __SA_ID__
+  /.well-known/assetlinks.json:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: __BUCKET__
+        object: .well-known/assetlinks.json
+        service_account_id: __SA_ID__
   /api:
     post:
       x-yc-apigateway-integration:

@@ -73,6 +73,21 @@ for PAGE in index.html privacy.html; do
     --data-binary @"dist/$PAGE" \
     "https://storage.yandexcloud.net/$BUCKET/$PAGE"
 done
+# файлы для установки на телефон: манифест, офлайн-кэш, иконки, привязка Android-приложения к сайту
+put_file() {
+  curl -fsS -X PUT \
+    -H "X-YaCloud-SubjectToken: $IAM_TOKEN" \
+    -H "Content-Type: $2" \
+    -H "Cache-Control: no-cache" \
+    --data-binary @"dist/$1" \
+    "https://storage.yandexcloud.net/$BUCKET/$1"
+}
+put_file manifest.webmanifest "application/manifest+json"
+put_file sw.js "application/javascript; charset=utf-8"
+put_file .well-known/assetlinks.json "application/json"
+for ICON in icon-192.png icon-512.png icon-maskable-512.png apple-touch-icon.png; do
+  put_file "$ICON" "image/png"
+done
 
 STEP="Функция $FN_NAME"; echo "== Функция $FN_NAME"
 echo "::notice title=Диагностика::$(curl -s -o /dev/null -w 'serverless-functions.api %{http_code} за %{time_total}с' --max-time 20 https://serverless-functions.api.cloud.yandex.net/ || echo 'serverless-functions.api недоступен')"
@@ -107,7 +122,7 @@ DOMAIN="$(yc serverless api-gateway get --name "$GW_NAME" --format json | jq -r 
 
 STEP="Проверка сайта"; echo "== Проверка сайта"
 sleep 5
-for PATH_ in / /privacy.html; do
+for PATH_ in / /privacy.html /manifest.webmanifest /sw.js /.well-known/assetlinks.json; do
   echo "GET $PATH_ → $(curl -s -o /dev/null -w '%{http_code}, %{size_download} байт' "https://$DOMAIN$PATH_")"
 done
 echo "POST /api ping → $(curl -s -X POST -H 'Content-Type: application/json' -d '{"action":"ping"}' "https://$DOMAIN/api")"
