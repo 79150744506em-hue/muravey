@@ -1,6 +1,8 @@
 // Собирает Android-проект (Trusted Web Activity) из android/twa-manifest.json.
 // Иконки берутся из собранного dist/, который раздаёт локальный сервер на порту 8765 (см. workflow).
 // Использование: node android/generate.mjs <папка проекта> <номер версии>
+import fs from 'node:fs';
+import path from 'node:path';
 import {TwaGenerator, TwaManifest, ConsoleLog} from '@bubblewrap/core';
 
 const [dir, version] = process.argv.slice(2);
@@ -10,3 +12,8 @@ manifest.appVersionName = `1.0.${manifest.appVersionCode}`;
 const error = manifest.validate();
 if (error) throw new Error(error);
 await new TwaGenerator().createTwaProject(dir, manifest, new ConsoleLog('twa'));
+
+// R8 переименовывает классы androidbrowserhelper, которые библиотека включает по имени,
+// и приложение падает при запуске («Component class R.u does not exist»). Код маленький — сжатие не нужно.
+const gradle = path.join(dir, 'app', 'build.gradle');
+fs.writeFileSync(gradle, fs.readFileSync(gradle, 'utf8').replace('minifyEnabled true', 'minifyEnabled false'));
