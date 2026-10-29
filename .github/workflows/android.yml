@@ -88,3 +88,41 @@ jobs:
           gh release create android "$RUNNER_TEMP/muravey.apk" --target "$GITHUB_SHA" \
             --title "Android-приложение" \
             --notes "Откройте эту страницу на телефоне, скачайте muravey.apk и установите. Новая версия ставится поверх старой, задачи сохраняются."
+
+  # Проверка запуска: ставим APK на эмулятор, открываем и смотрим, не упало ли приложение.
+  smoke:
+    needs: apk
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: muravey-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r muravey.apk
+            adb logcat -c
+            adb shell monkey -p ru.muravey.app -c android.intent.category.LAUNCHER 1
+            sleep 20
+            adb logcat -d > logcat.txt || true
+            grep -A40 "FATAL EXCEPTION" logcat.txt || echo "no crash"
+            adb shell dumpsys activity activities | grep -i "mResumedActivity\|topResumedActivity" || true
+            ! grep -q "FATAL EXCEPTION" logcat.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logcat
+          path: logcat.txt
