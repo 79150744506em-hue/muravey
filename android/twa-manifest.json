@@ -25,7 +25,7 @@
   "fallbackType": "customtabs",
   "features": {},
   "alphaDependencies": {"enabled": false},
-  "enableSiteSettingsShortcut": false,
+  "enableSiteSettingsShortcut": true,
   "isChromeOSOnly": false,
   "isMetaQuest": false,
   "minSdkVersion": 24,
