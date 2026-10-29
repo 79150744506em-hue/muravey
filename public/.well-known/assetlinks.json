@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ru.muravey.app",
+      "sha256_cert_fingerprints": ["E0:C0:DE:4E:C4:31:B2:2C:FD:05:28:C9:16:23:2C:9E:AA:63:F7:B8:FC:A6:8C:9D:3F:00:81:AD:BD:32:FE:C5"]
+    }
+  }
+]
