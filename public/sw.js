@@ -1,4 +1,4 @@
-// Офлайн-кэш установленного приложения: страница берётся из сети, а без сети — из кэша.
+// Офлайн-кэш установленного приложения: страница берётся из кэша и обновляется в фоне.
 // Запросы к /api и чужим сайтам не трогаем: задачи кэширует само приложение.
 const CACHE = 'muravey-v1';
 const SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
@@ -22,15 +22,12 @@ self.addEventListener('fetch', (e) => {
     if (req.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api')) return;
     // все адреса приложения (#вкладки, ?roadmap=…) — это одна страница index.html
     const key = req.mode === 'navigate' ? '/' : url.pathname;
-    e.respondWith(
-        fetch(req)
-            .then((res) => {
-                if (res.ok) {
-                    const copy = res.clone();
-                    caches.open(CACHE).then((c) => c.put(key, copy));
-                }
-                return res;
-            })
-            .catch(() => caches.match(key).then((hit) => hit || Response.error())),
-    );
+    // сначала из кэша — приложение открывается сразу, свежая версия скачивается в фоне
+    // и показывается при следующем запуске; без кэша (первый запуск) — из сети
+    const fresh = fetch(req);
+    const saved = fresh.then(async (res) => {
+        if (res.ok) await (await caches.open(CACHE)).put(key, res.clone());
+    });
+    e.waitUntil(saved.catch(() => {}));
+    e.respondWith(caches.match(key).then((hit) => hit || fresh));
 });
