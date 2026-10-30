@@ -1,6 +1,6 @@
 // Офлайн-кэш установленного приложения: страница берётся из кэша и обновляется в фоне.
 // Запросы к /api и чужим сайтам не трогаем: задачи кэширует само приложение.
-const CACHE = 'muravey-v1';
+const CACHE = 'muravey-v2';
 const SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {

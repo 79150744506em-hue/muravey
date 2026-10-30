@@ -496,6 +496,10 @@ export function App() {
         );
     };
     const doneToday = all.filter((t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today).length;
+    const visibleDoneToday = all.filter(
+        (t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today && matches(t),
+    ).length;
+    const dayTotal = visibleDoneToday + lists.today.length;
 
     const createTag = (name: string): Tag => {
         const tag: Tag = {
@@ -560,7 +564,6 @@ export function App() {
                         </Text>
                         <Text variant="body-1" color="secondary" className="mv-date">
                             {fmtToday.format(new Date())}
-                            {doneToday > 0 && ` · закрыто сегодня: ${doneToday}`}
                         </Text>
                     </div>
                 </div>
@@ -600,6 +603,29 @@ export function App() {
             )}
 
             <main className="mv-main">
+                {view === 'today' && tasks !== null && (
+                    <section className="mv-day" aria-labelledby="mv-day-title">
+                        <div className="mv-day__heading">
+                            <span className="mv-day__eyebrow">ШАГ ЗА ШАГОМ</span>
+                            <h2 id="mv-day-title">Сегодня</h2>
+                            <p title="Невыполненные задачи завтра вернутся в бэклог.">
+                                {filtering ? 'Задачи с выбранными тегами' : 'Самое важное — в пределах одного дня.'}
+                            </p>
+                        </div>
+                        {dayTotal > 0 && (
+                            <div className="mv-day__progress">
+                                <span><strong>{visibleDoneToday}</strong> из {dayTotal} выполнено</span>
+                                <ProgressBar done={visibleDoneToday} total={dayTotal} wide />
+                            </div>
+                        )}
+                        {!emptyDay && (
+                            <Button view="action" size="l" onClick={() => switchView('backlog')} disabled={!backend}>
+                                <Icon data={Plus} size={16} />
+                                Добавить задачи
+                            </Button>
+                        )}
+                    </section>
+                )}
                 {view === 'backlog' && (
                     <NewTaskButton onClick={() => openDraft('backlog')} disabled={!backend}>
                         Новая задача
@@ -614,17 +640,6 @@ export function App() {
                             Новая фокусная задача
                         </NewTaskButton>
                     </>
-                )}
-                {view === 'today' && !emptyDay && (
-                    <div className="mv-plan-bar">
-                        <Text variant="body-1" color="secondary">
-                            План на {fmtDate.format(new Date())}. Невыполненное завтра вернётся в бэклог.
-                        </Text>
-                        <Button view="action" size="m" onClick={() => switchView('backlog')} disabled={!backend}>
-                            <Icon data={Plus} size={16} />
-                            Добавить задачи
-                        </Button>
-                    </div>
                 )}
 
                 {view === 'roadmap' ? (
@@ -692,6 +707,7 @@ export function App() {
                 ) : emptyDay ? (
                     <PlanHero
                         hasBacklog={lists.backlog.length > 0}
+                        completed={doneToday > 0}
                         disabled={!backend}
                         onPlan={() => switchView('backlog')}
                     />
@@ -756,6 +772,7 @@ export function App() {
                 fullWidth
                 contentOverflow="auto"
                 aria-label="Задача"
+                modalClassName="mv-task-modal"
             >
                 {cardTask && (
                     <TaskDetails
@@ -1193,7 +1210,12 @@ function TagFilter({tags, value, onChange}: {tags: Tag[]; value: string[]; onCha
     );
 }
 
-function PlanHero({hasBacklog, disabled, onPlan}: {hasBacklog: boolean; disabled: boolean; onPlan: () => void}) {
+function PlanHero({hasBacklog, completed = false, disabled, onPlan}: {
+    hasBacklog: boolean;
+    completed?: boolean;
+    disabled: boolean;
+    onPlan: () => void;
+}) {
     // муравей бросает кофе и убегает к бэклогу, потом переключаем вкладку
     const [leaving, setLeaving] = React.useState(false);
     const go = () => {
@@ -1220,10 +1242,12 @@ function PlanHero({hasBacklog, disabled, onPlan}: {hasBacklog: boolean; disabled
                 </svg>
             </div>
             <Text variant="header-1" as="h2" className="mv-hero__title">
-                Сегодня — чистый лист
+                {completed ? 'Можно выдохнуть' : 'Сегодня — чистый лист'}
             </Text>
             <Text color="secondary" className="mv-hero__text">
-                {hasBacklog
+                {completed
+                    ? 'На сегодня всё закрыто. Можно остановиться или выбрать следующий маленький шаг.'
+                    : hasBacklog
                     ? 'Выберите в бэклоге, за что взяться сегодня. Остальное подождёт.'
                     : 'Бэклог пока пуст: добавьте туда задачи и перетащите нужные в «Сегодня».'}
             </Text>
@@ -1234,7 +1258,7 @@ function PlanHero({hasBacklog, disabled, onPlan}: {hasBacklog: boolean; disabled
                 onClick={go}
             >
                 <Icon data={Sun} size={20} />
-                Спланировать день
+                {completed ? 'Выбрать следующий шаг' : 'Спланировать день'}
             </button>
         </div>
     );
@@ -1318,6 +1342,7 @@ function ProgressBar({done, total, wide}: {done: number; total: number; wide?: b
         <span
             className={`mv-bar${wide ? ' mv-bar_wide' : ''}${done === total && total ? ' mv-bar_full' : ''}`}
             role="progressbar"
+            aria-label="Прогресс выполнения задач"
             aria-valuenow={pct}
             aria-valuemin={0}
             aria-valuemax={100}
@@ -1778,6 +1803,56 @@ function TaskDetails({
                 />
             </div>
 
+            <div className="mv-details__properties">
+                <section className="mv-field">
+                    <Text variant="subheader-1">Теги</Text>
+                    <TagInput
+                        id="mv-task-tags"
+                        tags={tags}
+                        tagMap={tagMap}
+                        value={task.tagIds}
+                        onUpdate={(v) => save({tagIds: v})}
+                        onCreateTag={onCreateTag}
+                        onSubmit={flushAndClose}
+                    />
+                </section>
+
+                {list !== 'focus' && !task.done && (
+                    <section className="mv-field">
+                        <Text variant="subheader-1">Дата</Text>
+                        <div className="mv-due-field">
+                            <input
+                                type="date"
+                                className="mv-due-field__input"
+                                value={task.dueDate ?? ''}
+                                onChange={(e) => save({dueDate: e.target.value || null})}
+                                aria-label="Дата задачи"
+                            />
+                            {task.dueDate ? (
+                                <>
+                                    <Text variant="caption-2" color="secondary">
+                                        {task.dueDate > today
+                                            ? 'До этого дня задача ждёт в бэклоге, в этот день сама придёт в «Сегодня».'
+                                            : task.dueDate === today
+                                              ? 'Задача на сегодня.'
+                                              : 'Дата прошла.'}
+                                    </Text>
+                                    <ActionTooltip title="Убрать дату">
+                                        <Button view="flat-secondary" size="s" onClick={() => save({dueDate: null})} aria-label="Убрать дату">
+                                            <Icon data={Xmark} size={14} />
+                                        </Button>
+                                    </ActionTooltip>
+                                </>
+                            ) : (
+                                <Text variant="caption-2" color="secondary">
+                                    Без даты. С датой задача сама придёт в «Сегодня» в свой день.
+                                </Text>
+                            )}
+                        </div>
+                    </section>
+                )}
+            </div>
+
             <section className="mv-field">
                 <Text variant="subheader-1">Описание</Text>
                 <DescriptionEditor
@@ -1787,54 +1862,6 @@ function TaskDetails({
                     placeholder="Подробности, ссылки, критерии готовности"
                 />
             </section>
-
-            <section className="mv-field">
-                <Text variant="subheader-1">Теги</Text>
-                <TagInput
-                    id="mv-task-tags"
-                    tags={tags}
-                    tagMap={tagMap}
-                    value={task.tagIds}
-                    onUpdate={(v) => save({tagIds: v})}
-                    onCreateTag={onCreateTag}
-                    onSubmit={flushAndClose}
-                />
-            </section>
-
-            {list !== 'focus' && !task.done && (
-                <section className="mv-field">
-                    <Text variant="subheader-1">Дата</Text>
-                    <div className="mv-due-field">
-                        <input
-                            type="date"
-                            className="mv-due-field__input"
-                            value={task.dueDate ?? ''}
-                            onChange={(e) => save({dueDate: e.target.value || null})}
-                            aria-label="Дата задачи"
-                        />
-                        {task.dueDate ? (
-                            <>
-                                <Text variant="caption-2" color="secondary">
-                                    {task.dueDate > today
-                                        ? 'До этого дня задача ждёт в бэклоге, в этот день сама придёт в «Сегодня».'
-                                        : task.dueDate === today
-                                          ? 'Задача на сегодня.'
-                                          : 'Дата прошла.'}
-                                </Text>
-                                <ActionTooltip title="Убрать дату">
-                                    <Button view="flat-secondary" size="s" onClick={() => save({dueDate: null})} aria-label="Убрать дату">
-                                        <Icon data={Xmark} size={14} />
-                                    </Button>
-                                </ActionTooltip>
-                            </>
-                        ) : (
-                            <Text variant="caption-2" color="secondary">
-                                Без даты. С датой задача сама придёт в «Сегодня» в свой день.
-                            </Text>
-                        )}
-                    </div>
-                </section>
-            )}
 
             {(people.length > 0 || person) && (
                 <section className="mv-field">
@@ -2063,7 +2090,7 @@ function TaskDetails({
             )}
 
             {!isNew && (
-                <section className="mv-field">
+                <section className="mv-field mv-details__comments">
                     <Text variant="subheader-1">
                         Комментарии{task.comments.length ? ` · ${task.comments.length}` : ''}
                     </Text>
