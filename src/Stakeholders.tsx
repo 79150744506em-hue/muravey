@@ -16,6 +16,7 @@ import {
 } from '@gravity-ui/uikit';
 import {ArrowLeft, Calendar, LinkSlash, Pencil, Persons, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
 
+import {AddListItem} from './AddListItem';
 import type {Attitude, ContactKind, Interaction, Outcome, Stakeholder, StakeholderMap, Task} from './types';
 import {addDays, dayKey, openTasksOf, uid} from './types';
 import {DescriptionEditor} from './DescriptionEditor';
@@ -140,10 +141,6 @@ export function StakeholdersView(p: StakeholdersProps) {
                 Карта стейкхолдеров для каждого продукта: кто влияет, кому интересно, когда вы говорили в последний раз и
                 когда поговорите снова.
             </Text>
-            <Button view="action" size="l" onClick={() => setCreating(true)} disabled={p.disabled} className="mv-map-new">
-                <Icon data={Plus} size={16} />
-                Новая карта стейкхолдеров
-            </Button>
             {sorted.length === 0 ? (
                 <div className="mv-maps-empty">
                     <img src={logo} alt="" className="mv-maps-empty__ant" />
@@ -173,6 +170,9 @@ export function StakeholdersView(p: StakeholdersProps) {
                     })}
                 </ul>
             )}
+            <AddListItem onClick={() => setCreating(true)} disabled={p.disabled}>
+                Добавить карту стейкхолдеров
+            </AddListItem>
             <TitleDialog
                 open={creating}
                 caption="Новая карта стейкхолдеров"
@@ -336,13 +336,6 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                 </div>
             </div>
 
-            <div>
-                <Button view="action" size="m" onClick={add} disabled={p.disabled}>
-                    <Icon data={Plus} size={16} />
-                    Стейкхолдер
-                </Button>
-            </div>
-
             <Matrix
                 people={map.stakeholders}
                 isHungry={hungry}
@@ -407,6 +400,9 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                     })}
                 </ul>
             )}
+            <AddListItem onClick={add} disabled={p.disabled}>
+                Добавить стейкхолдера
+            </AddListItem>
 
             <Dialog
                 open={Boolean(person)}

@@ -14,6 +14,7 @@ import {SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSor
 import {Icon, Text} from '@gravity-ui/uikit';
 import {Sun, Tray} from '@gravity-ui/icons';
 
+import {AddListItem} from './AddListItem';
 import type {Task} from './types';
 
 export type Col = 'backlog' | 'today';
@@ -30,14 +31,18 @@ export function BacklogBoard({
     today,
     renderRow,
     onPlace,
+    onAdd,
     emptyBacklog,
+    disabled = false,
 }: {
     backlog: Task[];
     today: Task[];
     renderRow: (t: Task) => React.ReactNode;
     /** задача оказалась в колонке col на позиции index; ids — итоговый порядок колонки */
     onPlace: (id: string, col: Col, ids: string[], index: number) => void;
+    onAdd: (col: Col) => void;
     emptyBacklog: string;
+    disabled?: boolean;
 }) {
     const sensors = useSensors(
         useSensor(MouseSensor, {activationConstraint: {distance: 5}}),
@@ -116,8 +121,20 @@ export function BacklogBoard({
                     byId={byId}
                     renderRow={renderRow}
                     empty="Перетащите сюда задачи на сегодня."
+                    onAdd={() => onAdd('today')}
+                    disabled={disabled}
                 />
-                <Column col="backlog" title="Бэклог" icon={Tray} ids={items.backlog} byId={byId} renderRow={renderRow} empty={emptyBacklog} />
+                <Column
+                    col="backlog"
+                    title="Бэклог"
+                    icon={Tray}
+                    ids={items.backlog}
+                    byId={byId}
+                    renderRow={renderRow}
+                    empty={emptyBacklog}
+                    onAdd={() => onAdd('backlog')}
+                    disabled={disabled}
+                />
             </div>
         </DndContext>
     );
@@ -131,6 +148,8 @@ function Column({
     byId,
     renderRow,
     empty,
+    onAdd,
+    disabled,
 }: {
     col: Col;
     title: string;
@@ -139,6 +158,8 @@ function Column({
     byId: Map<string, Task>;
     renderRow: (t: Task) => React.ReactNode;
     empty: string;
+    onAdd: () => void;
+    disabled: boolean;
 }) {
     const {setNodeRef, isOver} = useDroppable({id: COL_PREFIX + col});
     return (
@@ -164,6 +185,9 @@ function Column({
                     </ul>
                 )}
             </SortableContext>
+            <AddListItem onClick={onAdd} disabled={disabled}>
+                Добавить задачу
+            </AddListItem>
         </section>
     );
 }

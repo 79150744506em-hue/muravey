@@ -61,6 +61,102 @@ body {
     flex-direction: column;
     gap: var(--g-spacing-4);
 }
+.mv-app_shell {
+    max-width: 1440px;
+    min-height: 100dvh;
+    padding: 0 32px;
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    align-items: start;
+    gap: 32px;
+}
+.mv-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    margin-left: -16px;
+    padding: 28px 16px;
+    border-right: 1px solid var(--mv-divider);
+    background: var(--mv-surface);
+}
+.mv-sidebar__nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.mv-sidebar__item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--g-color-text-secondary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.mv-sidebar__item:hover {
+    background: var(--g-color-base-simple-hover);
+    color: var(--g-color-text-primary);
+}
+.mv-sidebar__item:focus-visible {
+    outline: 2px solid var(--g-color-line-focus);
+    outline-offset: 1px;
+}
+.mv-sidebar__item_active {
+    background: var(--g-color-base-selection);
+    color: var(--g-color-text-primary);
+    font-weight: 600;
+}
+.mv-sidebar__item_active:hover {
+    background: var(--g-color-base-selection-hover);
+}
+.mv-sidebar__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mv-sidebar__counter {
+    min-width: 22px;
+    padding: 1px 6px;
+    border-radius: 9px;
+    background: var(--g-color-base-generic);
+    color: var(--g-color-text-secondary);
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.mv-workspace {
+    width: 100%;
+    max-width: var(--mv-max);
+    min-width: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: var(--g-spacing-4);
+    padding-block: var(--g-spacing-6) var(--g-spacing-10);
+}
+.mv-header .mv-header__brand {
+    display: none;
+}
+.mv-header__context {
+    margin-right: auto;
+}
+.mv-list-add {
+    align-self: flex-start;
+    justify-content: flex-start;
+}
 .mv-header {
     display: flex;
     align-items: center;
@@ -98,9 +194,6 @@ body {
 }
 .g-root_theme_dark .mv-mark {
     filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 0 4px rgba(255, 255, 255, 0.18));
-}
-.mv-tabs {
-    max-width: 100%;
 }
 .mv-main {
     display: flex;
@@ -1507,9 +1600,6 @@ body {
 }
 
 /* ---------- дорожные карты ---------- */
-.mv-map-new {
-    align-self: flex-start;
-}
 .mv-maps {
     list-style: none;
     margin: 0;
@@ -2620,7 +2710,26 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 .mv-tabbar {
     display: none;
 }
-@media (max-width: 640px) {
+@media (max-width: 900px) {
+    .mv-app_shell {
+        max-width: var(--mv-max);
+        min-height: 0;
+        display: flex;
+        gap: 0;
+        padding: 0;
+    }
+    .mv-sidebar,
+    .mv-header__context {
+        display: none;
+    }
+    .mv-header .mv-header__brand {
+        display: flex;
+    }
+    .mv-workspace {
+        max-width: none;
+        gap: var(--g-spacing-4);
+        padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+    }
     :root {
         --mv-tabbar-h: 60px;
     }
@@ -2643,10 +2752,13 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     .mv-header .mv-tags-btn .g-button__text {
         display: none;
     }
-    .mv-app {
+    .mv-app:not(.mv-app_shell) {
         padding-top: 0;
         padding-bottom: calc(var(--mv-tabbar-h) + env(safe-area-inset-bottom) + var(--g-spacing-6));
         padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right));
+    }
+    .mv-app_shell {
+        padding-bottom: calc(var(--mv-tabbar-h) + env(safe-area-inset-bottom) + var(--g-spacing-6));
     }
 
     /* шапка: одна строка, прилипает сверху */

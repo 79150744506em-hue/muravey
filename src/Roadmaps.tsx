@@ -31,6 +31,7 @@ import {
     Xmark,
 } from '@gravity-ui/icons';
 
+import {AddListItem} from './AddListItem';
 import type {Milestone, Roadmap, RoadmapScale, Task} from './types';
 import {dayKey, uid} from './types';
 import {loadSharedRoadmap} from './store';
@@ -413,10 +414,7 @@ export function Gantt({
                     {onAdd && !readOnly && (
                         <div className="mv-gantt__row mv-gantt__row_add">
                             <div className="mv-gantt__label mv-gantt__label_add">
-                                <Button view="flat-secondary" size="m" onClick={onAdd}>
-                                    <Icon data={Plus} size={16} />
-                                    Новая веха
-                                </Button>
+                                <AddListItem onClick={onAdd}>Добавить веху</AddListItem>
                             </div>
                         </div>
                     )}
@@ -596,10 +594,6 @@ export function RoadmapsView(p: RoadmapsProps) {
             <Text variant="body-1" color="secondary" className="mv-hint">
                 Дорожные карты проектов и продуктов: вехи на шкале времени, к вехам можно привязывать задачи.
             </Text>
-            <Button view="action" size="l" onClick={() => setCreating(true)} disabled={p.disabled} className="mv-map-new">
-                <Icon data={Plus} size={16} />
-                Новая дорожная карта
-            </Button>
             {sorted.length === 0 ? (
                 <div className="mv-maps-empty">
                     <img src={logo} alt="" className="mv-maps-empty__ant" />
@@ -625,6 +619,9 @@ export function RoadmapsView(p: RoadmapsProps) {
                     ))}
                 </ul>
             )}
+            <AddListItem onClick={() => setCreating(true)} disabled={p.disabled}>
+                Добавить дорожную карту
+            </AddListItem>
             <SettingsDialog
                 open={creating}
                 onClose={() => setCreating(false)}

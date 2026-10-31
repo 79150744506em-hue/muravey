@@ -45,6 +45,7 @@ import type {LoginOptions} from './store';
 import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
 import type {ListKind, Milestone, Roadmap, Stakeholder, StakeholderMap, Tag, TagTheme, Task} from './types';
+import {AddListItem} from './AddListItem';
 import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
@@ -209,14 +210,14 @@ export function App() {
         [backend, run],
     );
 
-    const openDraft = (list: 'backlog' | 'focus') => {
+    const openDraft = (list: Exclude<ListKind, 'done'> = 'backlog') => {
         const t: Task = {
             id: uid(),
             title: '',
             description: '',
             list,
-            plannedFor: null,
-            plannedAt: null,
+            plannedFor: list === 'today' ? today : null,
+            plannedAt: list === 'today' ? new Date().toISOString() : null,
             tagIds: [],
             comments: [],
             done: false,
@@ -553,10 +554,35 @@ export function App() {
     if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
     return (
-        <div className="mv-app">
+        <div className="mv-app mv-app_shell">
             {feast > 0 && <MonkeyFeast key={feast} onEnd={() => setFeast(0)} />}
-            <header className="mv-header">
+            <aside className="mv-sidebar">
                 <div className="mv-brand">
+                    <img src={logo} alt="" className="mv-mark" />
+                    <Text variant="header-1" as="h1" className="mv-title">
+                        Муравей
+                    </Text>
+                </div>
+                <nav className="mv-sidebar__nav" aria-label="Разделы">
+                    {tabs.map((t) => (
+                        <button
+                            key={t.id}
+                            type="button"
+                            className={`mv-sidebar__item${view === t.id ? ' mv-sidebar__item_active' : ''}`}
+                            aria-current={view === t.id ? 'page' : undefined}
+                            onClick={() => switchView(t.id)}
+                        >
+                            <Icon data={t.icon} size={18} />
+                            <span className="mv-sidebar__label">{t.title}</span>
+                            {t.counter !== undefined && <span className="mv-sidebar__counter">{t.counter}</span>}
+                        </button>
+                    ))}
+                </nav>
+            </aside>
+
+            <div className="mv-workspace">
+            <header className="mv-header">
+                <div className="mv-brand mv-header__brand">
                     <img src={logo} alt="" className="mv-mark" />
                     <div>
                         <Text variant="header-1" as="h1" className="mv-title">
@@ -567,6 +593,9 @@ export function App() {
                         </Text>
                     </div>
                 </div>
+                <Text variant="body-1" color="secondary" className="mv-date mv-header__context">
+                    {fmtToday.format(new Date())}
+                </Text>
                 <div className="mv-header__actions">
                     <Button view="outlined" size="m" onClick={() => setTagsOpen(true)} className="mv-tags-btn" title="Теги">
                         <Icon data={TagIcon} size={16} />
@@ -582,14 +611,6 @@ export function App() {
                     />
                 </div>
             </header>
-
-            <TabList value={view} onUpdate={(v) => switchView(v)} size="l" contentOverflow="scroll" className="mv-tabs">
-                {tabs.map((t) => (
-                    <Tab key={t.id} value={t.id} icon={<Icon data={t.icon} size={16} />} counter={t.counter}>
-                        {t.title}
-                    </Tab>
-                ))}
-            </TabList>
 
             {tags.length > 0 && !isMapView(view) && (
                 <TagFilter tags={sortedTags} value={activeFilter} onChange={setTagFilter} />
@@ -618,28 +639,12 @@ export function App() {
                                 <ProgressBar done={visibleDoneToday} total={dayTotal} wide />
                             </div>
                         )}
-                        {!emptyDay && (
-                            <Button view="action" size="l" onClick={() => switchView('backlog')} disabled={!backend}>
-                                <Icon data={Plus} size={16} />
-                                Добавить задачи
-                            </Button>
-                        )}
                     </section>
                 )}
-                {view === 'backlog' && (
-                    <NewTaskButton onClick={() => openDraft('backlog')} disabled={!backend}>
-                        Новая задача
-                    </NewTaskButton>
-                )}
                 {view === 'focus' && (
-                    <>
-                        <Text variant="body-1" color="secondary" className="mv-hint">
-                            Фокусные задачи висят здесь постоянно, пока вы их не закроете.
-                        </Text>
-                        <NewTaskButton onClick={() => openDraft('focus')} disabled={!backend}>
-                            Новая фокусная задача
-                        </NewTaskButton>
-                    </>
+                    <Text variant="body-1" color="secondary" className="mv-hint">
+                        Фокусные задачи висят здесь постоянно, пока вы их не закроете.
+                    </Text>
                 )}
 
                 {view === 'roadmap' ? (
@@ -698,8 +703,11 @@ export function App() {
                         today={lists.today}
                         renderRow={(t) => row(t)}
                         onPlace={placeOnBoard}
+                        onAdd={openDraft}
+                        disabled={!backend}
                         emptyBacklog={filtering ? 'Нет задач с выбранными тегами.' : 'Бэклог пуст.'}
-                    />                ) : tasks === null ? (
+                    />
+                ) : tasks === null ? (
                     <div className="mv-loading">
                         <Loader size="m" />
                         <Text color="secondary">Загружаю задачи…</Text>
@@ -728,6 +736,11 @@ export function App() {
                         {shown.map((t) => row(t, view !== 'done'))}
                     </SortableList>
                 )}
+                {(view === 'today' || view === 'focus') && tasks !== null && (
+                    <AddListItem onClick={() => openDraft(view)} disabled={!backend}>
+                        {view === 'focus' ? 'Добавить фокусную задачу' : 'Добавить задачу'}
+                    </AddListItem>
+                )}
             </main>
 
             {/* на рабочем экране цитата сменяется реже и не зачитывается экранным диктором */}
@@ -738,6 +751,7 @@ export function App() {
                     Задачи сохраняются в этом браузере.
                 </Text>
             )}
+            </div>
 
             <nav className="mv-tabbar" aria-label="Разделы">
                 {tabs.map((t) => (
@@ -1034,17 +1048,6 @@ function LoginScreen({opts, onReady}: {opts: LoginOptions; onReady: (b: Backend)
                 )}
             </form>
             <Quotes />
-        </div>
-    );
-}
-
-function NewTaskButton({onClick, disabled, children}: {onClick: () => void; disabled?: boolean; children: string}) {
-    return (
-        <div>
-            <Button view="action" size="l" onClick={onClick} disabled={disabled}>
-                <Icon data={Plus} size={16} />
-                {children}
-            </Button>
         </div>
     );
 }
@@ -1717,7 +1720,13 @@ function TaskDetails({
         <div className="mv-details mv-details_popup">
             <div className="mv-details__head">
                 <Label theme={task.done ? 'success' : list === 'focus' ? 'utility' : 'normal'} size="s">
-                    {isNew ? (list === 'focus' ? 'Новая фокусная задача' : 'Новая задача в бэклог') : where}
+                    {isNew
+                        ? list === 'focus'
+                            ? 'Новая фокусная задача'
+                            : list === 'today'
+                              ? 'Новая задача на сегодня'
+                              : 'Новая задача в бэклог'
+                        : where}
                 </Label>
                 <SaveStatus
                     state={saveState}
