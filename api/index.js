@@ -64,19 +64,26 @@ function reply(statusCode, body) {
 
 const fail = (statusCode, error) => Object.assign(new Error(error), {statusCode});
 
-async function readJson(iam, key) {
+async function readJson(iam, key, withMeta = false) {
     const res = await fetch(`${STORAGE}/${BUCKET}/${key}`, {headers: {'X-YaCloud-SubjectToken': iam}});
-    if (res.status === 404) return null;
+    if (res.status === 404) return withMeta ? {data: null, etag: null} : null;
     if (!res.ok) throw new Error(`storage read ${res.status}: ${await res.text()}`);
-    return res.json();
+    const data = await res.json();
+    return withMeta ? {data, etag: res.headers?.get('etag') || null} : data;
 }
 
-async function writeJson(iam, key, value) {
+async function writeJson(iam, key, value, expectedEtag = null, createOnly = false) {
     const res = await fetch(`${STORAGE}/${BUCKET}/${key}`, {
         method: 'PUT',
-        headers: {'X-YaCloud-SubjectToken': iam, 'Content-Type': 'application/json'},
+        headers: {
+            'X-YaCloud-SubjectToken': iam,
+            'Content-Type': 'application/json',
+            ...(expectedEtag ? {'If-Match': expectedEtag} : {}),
+            ...(createOnly ? {'If-None-Match': '*'} : {}),
+        },
         body: JSON.stringify(value),
     });
+    if (res.status === 412) throw fail(409, 'state_conflict');
     if (!res.ok) throw new Error(`storage write ${res.status}: ${await res.text()}`);
 }
 
@@ -204,72 +211,92 @@ async function handle(req, headers, iam) {
     const uid = readToken(auth.replace(/^Bearer\s+/i, ''));
     if (!uid) throw fail(401, 'unauthorized');
 
-    const state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], ...(await readJson(iam, stateKey(uid)))};
-    if (req.action === 'state') return {...state, token: issueToken(uid)};
-    const findMap = (id) => {
-        const map = state.roadmaps.find((r) => r.id === id);
-        if (!map) throw fail(404, 'not_found');
-        return map;
-    };
+    return updateState(req, uid, iam);
+}
 
-    switch (req.action) {
-        case 'saveTask':
-            if (!isObj(req.item)) throw fail(400, 'bad_item');
-            state.tasks = upsert(state.tasks, req.item);
-            break;
-        case 'removeTask':
-            state.tasks = state.tasks.filter((t) => t.id !== req.id);
-            break;
-        case 'saveTag':
-            if (!isObj(req.item)) throw fail(400, 'bad_item');
-            state.tags = upsert(state.tags, req.item);
-            break;
-        case 'removeTag':
-            state.tags = state.tags.filter((t) => t.id !== req.id);
-            break;
-        case 'saveRoadmap':
-            if (!isObj(req.item)) throw fail(400, 'bad_item');
-            state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, req.item));
-            break;
-        case 'removeRoadmap': {
-            const map = state.roadmaps.find((r) => r.id === req.id);
-            if (map && map.shareId) await deleteKey(iam, shareKey(map.shareId));
-            state.roadmaps = state.roadmaps.filter((r) => r.id !== req.id);
-            break;
-        }
-        case 'saveStakeholderMap':
-            if (!isObj(req.item)) throw fail(400, 'bad_item');
-            state.stakeholders = upsert(state.stakeholders, req.item);
-            break;
-        case 'removeStakeholderMap':
-            state.stakeholders = state.stakeholders.filter((m) => m.id !== req.id);
-            break;
-        case 'shareRoadmap': {
-            const map = findMap(req.id);
-            if (!map.shareId) {
-                map.shareId = crypto.randomBytes(18).toString('base64url');
-                await writeJson(iam, shareKey(map.shareId), {u: uid, r: map.id});
+async function updateState(req, uid, iam) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+        const saved = await readJson(iam, stateKey(uid), true);
+        const state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], ...(saved.data || {})};
+        if (req.action === 'state') return {...state, token: issueToken(uid)};
+        const findMap = (id) => {
+            const map = state.roadmaps.find((r) => r.id === id);
+            if (!map) throw fail(404, 'not_found');
+            return map;
+        };
+        let createdShare = null;
+        let removedShare = null;
+
+        try {
+            switch (req.action) {
+                case 'saveTask':
+                    if (!isObj(req.item)) throw fail(400, 'bad_item');
+                    state.tasks = upsert(state.tasks, req.item);
+                    break;
+                case 'removeTask':
+                    state.tasks = state.tasks.filter((t) => t.id !== req.id);
+                    break;
+                case 'saveTag':
+                    if (!isObj(req.item)) throw fail(400, 'bad_item');
+                    state.tags = upsert(state.tags, req.item);
+                    break;
+                case 'removeTag':
+                    state.tags = state.tags.filter((t) => t.id !== req.id);
+                    break;
+                case 'saveRoadmap':
+                    if (!isObj(req.item)) throw fail(400, 'bad_item');
+                    state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, req.item));
+                    break;
+                case 'removeRoadmap': {
+                    const map = state.roadmaps.find((r) => r.id === req.id);
+                    if (map?.shareId) removedShare = map.shareId;
+                    state.roadmaps = state.roadmaps.filter((r) => r.id !== req.id);
+                    break;
+                }
+                case 'saveStakeholderMap':
+                    if (!isObj(req.item)) throw fail(400, 'bad_item');
+                    state.stakeholders = upsert(state.stakeholders, req.item);
+                    break;
+                case 'removeStakeholderMap':
+                    state.stakeholders = state.stakeholders.filter((m) => m.id !== req.id);
+                    break;
+                case 'shareRoadmap': {
+                    const map = findMap(req.id);
+                    if (!map.shareId) {
+                        createdShare = crypto.randomBytes(18).toString('base64url');
+                        map.shareId = createdShare;
+                        await writeJson(iam, shareKey(createdShare), {u: uid, r: map.id});
+                    }
+                    break;
+                }
+                case 'unshareRoadmap': {
+                    const map = findMap(req.id);
+                    if (map.shareId) removedShare = map.shareId;
+                    map.shareId = null;
+                    break;
+                }
+                case 'import':
+                    if (!Array.isArray(req.tasks) || !Array.isArray(req.tags)) throw fail(400, 'bad_import');
+                    for (const t of req.tasks) if (isObj(t)) state.tasks = upsert(state.tasks, t);
+                    for (const t of req.tags) if (isObj(t)) state.tags = upsert(state.tags, t);
+                    for (const r of req.roadmaps || [])
+                        if (isObj(r)) state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, r));
+                    for (const m of req.stakeholders || [])
+                        if (isObj(m)) state.stakeholders = upsert(state.stakeholders, m);
+                    break;
+                default:
+                    throw fail(400, 'unknown_action');
             }
-            break;
+            await writeJson(iam, stateKey(uid), state, saved.etag, saved.data === null);
+        } catch (e) {
+            if (createdShare) await deleteKey(iam, shareKey(createdShare)).catch(() => {});
+            if (e?.statusCode === 409 && e.message === 'state_conflict' && attempt < 3) continue;
+            throw e;
         }
-        case 'unshareRoadmap': {
-            const map = findMap(req.id);
-            if (map.shareId) await deleteKey(iam, shareKey(map.shareId));
-            map.shareId = null;
-            break;
-        }
-        case 'import':
-            if (!Array.isArray(req.tasks) || !Array.isArray(req.tags)) throw fail(400, 'bad_import');
-            for (const t of req.tasks) if (isObj(t)) state.tasks = upsert(state.tasks, t);
-            for (const t of req.tags) if (isObj(t)) state.tags = upsert(state.tags, t);
-            for (const r of req.roadmaps || []) if (isObj(r)) state.roadmaps = upsert(state.roadmaps, keepShare(state.roadmaps, r));
-            for (const m of req.stakeholders || []) if (isObj(m)) state.stakeholders = upsert(state.stakeholders, m);
-            break;
-        default:
-            throw fail(400, 'unknown_action');
+        if (removedShare) await deleteKey(iam, shareKey(removedShare));
+        return state;
     }
-    await writeJson(iam, stateKey(uid), state);
-    return state;
+    throw fail(409, 'state_conflict');
 }
 
 module.exports.handler = async function (event, context) {

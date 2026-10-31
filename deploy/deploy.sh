@@ -123,10 +123,30 @@ DOMAIN="$(yc serverless api-gateway get --name "$GW_NAME" --format json | jq -r 
 STEP="Проверка сайта"; echo "== Проверка сайта"
 sleep 5
 for PATH_ in / /privacy.html /manifest.webmanifest /sw.js /.well-known/assetlinks.json; do
-  echo "GET $PATH_ → $(curl -s -o /dev/null -w '%{http_code}, %{size_download} байт' "https://$DOMAIN$PATH_")"
+  META="$(curl -fsS --max-time 30 -o /dev/null -w '%{http_code} %{size_download}' "https://$DOMAIN$PATH_")"
+  read -r CODE SIZE <<<"$META"
+  if [ "$CODE" != "200" ] || [ "$SIZE" -le 0 ]; then
+    echo "::error title=Проверка сайта не пройдена::GET $PATH_ вернул $CODE, размер $SIZE байт"
+    exit 1
+  fi
+  echo "GET $PATH_ → $CODE, $SIZE байт"
 done
-echo "POST /api ping → $(curl -s -X POST -H 'Content-Type: application/json' -d '{"action":"ping"}' "https://$DOMAIN/api")"
-echo "POST /api login → $(curl -s -X POST -H 'Content-Type: application/json' -d '{"action":"login","email":"nobody@example.com","password":"x"}' "https://$DOMAIN/api")"
+PING="$(curl -fsS --max-time 30 -X POST -H 'Content-Type: application/json' -d '{"action":"ping"}' "https://$DOMAIN/api")"
+if ! jq -e '.ok == true' >/dev/null <<<"$PING"; then
+  echo "::error title=Проверка API не пройдена::POST /api ping → $PING"
+  exit 1
+fi
+echo "POST /api ping → $PING"
+LOGIN="$(curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"login","email":"nobody@example.com","password":"x"}' \
+  -w '\n%{http_code}' "https://$DOMAIN/api")"
+LOGIN_CODE="${LOGIN##*$'\n'}"
+LOGIN_BODY="${LOGIN%$'\n'*}"
+if [ "$LOGIN_CODE" != "401" ] || ! jq -e '.error == "wrong_password"' >/dev/null <<<"$LOGIN_BODY"; then
+  echo "::error title=Проверка входа не пройдена::POST /api login → $LOGIN_CODE $LOGIN_BODY"
+  exit 1
+fi
+echo "POST /api login → $LOGIN_CODE $LOGIN_BODY"
 
 echo "Готово: https://$DOMAIN"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

@@ -138,6 +138,7 @@ function localBackend(): Backend {
     const subs = new Set<{
         onTasks: (t: Task[]) => void;
         onTags: (t: Tag[]) => void;
+        onError: (m: string) => void;
         onRoadmaps: (r: Roadmap[]) => void;
         onStakeholders: (m: StakeholderMap[]) => void;
     }>();
@@ -145,7 +146,9 @@ function localBackend(): Backend {
         try {
             localStorage.setItem(LS_KEY, JSON.stringify(state));
         } catch {
-            /* приватное окно и т.п. */
+            const message = 'Не получилось сохранить изменения в браузере. Проверьте доступ к хранилищу и свободное место.';
+            subs.forEach((s) => s.onError(message));
+            throw new Error(message);
         }
         subs.forEach((s) => {
             s.onTasks(state.tasks);
@@ -160,8 +163,8 @@ function localBackend(): Backend {
     };
     return {
         kind: 'local',
-        subscribe(onTasks, onTags, _onError, onRoadmaps, onStakeholders) {
-            const s = {onTasks, onTags, onRoadmaps, onStakeholders};
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders) {
+            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders};
             subs.add(s);
             onTasks(state.tasks);
             onTags(state.tags);
