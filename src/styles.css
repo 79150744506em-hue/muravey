@@ -170,6 +170,15 @@ body {
 .mv-footnote {
     text-align: center;
 }
+.mv-version {
+    box-sizing: border-box;
+    min-height: 36px;
+    padding: 0 16px 16px;
+    color: var(--g-color-text-hint);
+    font-size: var(--g-text-caption-2-font-size, 13px);
+    line-height: 20px;
+    text-align: center;
+}
 
 /* ---------- строка задачи ---------- */
 .mv-list {
@@ -787,7 +796,7 @@ body {
 
 /* ---------- вход ---------- */
 .mv-login {
-    min-height: 100vh;
+    min-height: calc(100dvh - 36px);
     display: flex;
     flex-direction: column;
     align-items: center;

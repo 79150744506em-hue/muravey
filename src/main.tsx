@@ -8,6 +8,7 @@ import type {Theme} from '@gravity-ui/uikit';
 import {configure as configureEditor} from '@gravity-ui/markdown-editor';
 import {App} from './App';
 import {SharedRoadmap} from './Roadmaps';
+import {VersionInfo} from './VersionInfo';
 import logo from './assets/logo.png';
 
 configure({lang: 'ru'});
@@ -46,6 +47,7 @@ function Root() {
         <ThemeProvider theme={theme}>
             <ToasterProvider toaster={toaster}>
                 {sharedId ? <SharedRoadmap id={sharedId} /> : <App />}
+                <VersionInfo />
                 <ToasterComponent />
             </ToasterProvider>
         </ThemeProvider>
