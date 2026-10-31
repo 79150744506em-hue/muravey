@@ -414,6 +414,10 @@ body {
 }
 
 /* ---------- панель задачи ---------- */
+.mv-task-modal {
+    --g-color-base-modal: var(--mv-surface);
+    --g-color-base-light: var(--mv-surface);
+}
 .mv-details {
     display: flex;
     flex-direction: column;
@@ -429,7 +433,7 @@ body {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 20px;
     padding: 18px;
-    background: var(--mv-canvas);
+    background: var(--mv-surface);
     border: 1px solid var(--mv-divider);
     border-radius: 12px;
 }
@@ -437,7 +441,7 @@ body {
 .mv-details__properties .mv-due-field { align-items: flex-start; }
 .mv-details__comments { padding-top: 24px; border-top: 1px solid var(--mv-divider); }
 .mv-details_popup {
-    min-height: 0;
+    min-height: 100%;
     padding-bottom: var(--g-spacing-5);
 }
 .mv-details_popup .mv-details__foot {
@@ -447,6 +451,7 @@ body {
     border: 1px solid var(--g-color-line-generic);
     border-radius: var(--g-border-radius-l, 8px);
     padding: var(--g-spacing-2) var(--g-spacing-3) var(--g-spacing-3);
+    background: var(--mv-surface);
     transition: border-color 0.1s;
 }
 .mv-desc:focus-within {
@@ -2835,16 +2840,19 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 
 /* Панель задачи на широком экране, нижний лист на телефоне. */
 @media (min-width: 900px) {
-    .mv-task-modal { background-color: rgba(35, 28, 24, 0.18); }
+    .g-modal.mv-task-modal { background-color: transparent; }
     .mv-task-modal .g-modal__content-aligner { justify-content: flex-end; align-items: stretch; }
     .mv-task-modal .g-modal__content {
         --g-modal-margin: 0px;
-        --g-modal-border-radius: 20px 0 0 20px;
+        --g-modal-border-radius: 0;
+        box-sizing: border-box;
         height: 100dvh;
         max-height: 100dvh;
-        box-shadow: -16px 0 64px rgba(35, 28, 24, 0.1);
+        border-left: 1px solid var(--g-color-line-generic);
+        background: var(--mv-surface);
+        box-shadow: none;
     }
-    .mv-task-modal .g-dialog { max-height: 100dvh; min-height: 100dvh; }
+    .mv-task-modal .g-dialog { max-height: 100dvh; min-height: 100dvh; background: var(--mv-surface); }
     .mv-task-modal[data-floating-ui-status='initial'] .g-modal__content,
     .mv-task-modal[data-floating-ui-status='close'] .g-modal__content { transform: translateX(100%); }
     .mv-task-modal[data-floating-ui-status='open'] .g-modal__content { transform: translateX(0); }
