@@ -2131,6 +2131,146 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 .mv-gantt__handle_start {
     margin-left: -2px;
 }
+.mv-map-card__strip-deadline {
+    position: absolute;
+    top: 8px;
+    bottom: 0;
+    z-index: 1;
+    border-left: 2px dashed #d04b40;
+}
+.mv-gantt__scale_deadlines {
+    height: 80px;
+}
+.mv-gantt__deadlines {
+    position: absolute;
+    top: 52px;
+    left: 0;
+    right: 0;
+    height: 28px;
+}
+.mv-gantt__deadline-label {
+    position: absolute;
+    top: 3px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    max-width: 180px;
+    height: 22px;
+    padding: 0 7px;
+    border: 1px solid color-mix(in srgb, #d04b40 45%, transparent);
+    border-radius: 6px;
+    background: var(--g-color-base-background);
+    color: #b43b32;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.mv-gantt__deadline-label:disabled {
+    opacity: 1;
+    cursor: default;
+}
+.mv-gantt__deadline-label:not(:disabled):hover {
+    background: color-mix(in srgb, #d04b40 8%, var(--g-color-base-background));
+}
+.mv-gantt__deadline-label_center { transform: translateX(-50%); }
+.mv-gantt__deadline-label_end { transform: translateX(-100%); }
+.mv-gantt__deadline-label > span:first-of-type {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mv-gantt__deadline-label > svg {
+    flex-shrink: 0;
+}
+.mv-gantt__deadline-date {
+    flex-shrink: 0;
+    color: var(--g-color-text-secondary);
+}
+.mv-gantt__deadline-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    margin-left: -1px;
+    border-left: 2px dashed #d04b40;
+    opacity: 0.75;
+}
+.mv-gantt__row_epic,
+.mv-gantt__row_epic:hover {
+    min-height: 42px;
+    background: var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.025));
+}
+.mv-gantt__row_epic > .mv-gantt__label,
+.mv-gantt__row_epic:hover > .mv-gantt__label {
+    background: linear-gradient(
+            var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.025)),
+            var(--g-color-base-generic-ultralight, rgba(0, 0, 0, 0.025))
+        ),
+        var(--g-color-base-background);
+}
+.mv-gantt__label_epic {
+    gap: 1px;
+}
+.mv-gantt__label_nested {
+    padding-inline-start: 26px;
+}
+.mv-gantt__epic-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    line-height: 18px;
+}
+.mv-gantt__epic-name > svg {
+    flex-shrink: 0;
+    color: var(--g-color-text-utility);
+}
+.mv-gantt__label_add {
+    gap: 0;
+}
+.mv-color-picker {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--g-spacing-2);
+}
+.mv-color-picker__swatch {
+    box-sizing: border-box;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 2px solid var(--g-color-base-background);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--g-color-line-generic);
+    cursor: pointer;
+}
+.mv-color-picker__swatch_on {
+    box-shadow: 0 0 0 2px var(--g-color-line-generic-active);
+}
+.mv-color-picker__swatch:focus-visible {
+    outline: 2px solid var(--g-color-line-focus);
+    outline-offset: 3px;
+}
+.mv-color-picker__custom {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--g-color-text-secondary);
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    cursor: pointer;
+}
+.mv-color-picker__custom input {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
+}
 @media (max-width: 640px) {
     .mv-gantt {
         --mv-gantt-label: 140px;

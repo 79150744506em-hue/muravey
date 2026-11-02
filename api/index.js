@@ -178,7 +178,7 @@ async function handle(req, headers, iam) {
                 scale: map.scale,
                 from: map.from,
                 to: map.to,
-                milestones: (map.milestones || []).map(({id, title, start, end, owner, blockedBy, status, risk}) => ({
+                milestones: (map.milestones || []).map(({id, title, start, end, owner, blockedBy, status, risk, color, epicId}) => ({
                     id,
                     title,
                     start,
@@ -187,7 +187,11 @@ async function handle(req, headers, iam) {
                     blockedBy: blockedBy || [],
                     status: status || undefined,
                     risk: status === 'risk' ? risk || '' : undefined,
+                    color: color || undefined,
+                    epicId: epicId || null,
                 })),
+                epics: (map.epics || []).map(({id, title}) => ({id, title})),
+                deadlines: (map.deadlines || []).map(({id, title, date}) => ({id, title, date})),
             },
         };
     }

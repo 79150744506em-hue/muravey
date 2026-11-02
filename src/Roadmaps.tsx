@@ -22,6 +22,7 @@ import {
     Flag,
     Gear,
     Globe,
+    Layers,
     LinkSlash,
     Lock,
     Person,
@@ -32,7 +33,7 @@ import {
 } from '@gravity-ui/icons';
 
 import {AddListItem} from './AddListItem';
-import type {Milestone, Roadmap, RoadmapScale, Task} from './types';
+import type {Deadline, Epic, Milestone, Roadmap, RoadmapScale, Task} from './types';
 import {dayKey, uid} from './types';
 import {loadSharedRoadmap} from './store';
 import {DescriptionEditor} from './DescriptionEditor';
@@ -61,7 +62,7 @@ const fmtDayYear = {format: (d: Date) => fmtDayYearFull.format(d).replace(/\s*г
 const fmtYm = (ym: string) => `${MONTHS_SHORT[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
 export const periodText = (r: Pick<Roadmap, 'scale' | 'from' | 'to'>) =>
     r.scale === 'years' ? `${r.from.slice(0, 4)} – ${r.to.slice(0, 4)}` : `${fmtYm(r.from)} – ${fmtYm(r.to)}`;
-export const SCALE_NAMES: Record<RoadmapScale, string> = {months: 'Месяцы', years: 'Годы'};
+export const SCALE_NAMES: Record<RoadmapScale, string> = {weeks: 'Недели', months: 'Месяцы', years: 'Годы'};
 
 /** Сроки вехи для подписи: год показываем, только если веха выходит за текущий */
 export function datesText(m: Pick<Milestone, 'start' | 'end'>) {
@@ -74,10 +75,18 @@ export function datesText(m: Pick<Milestone, 'start' | 'end'>) {
 
 /* ---------- гант ---------- */
 
-// ширина дня: месяц около 120 px, год 240 px
-const dayPx = (scale: RoadmapScale) => (scale === 'months' ? 4 : 240 / 365.25);
+// неделя около 84 px, месяц около 120 px, год 240 px
+const dayPx = (scale: RoadmapScale) => (scale === 'weeks' ? 12 : scale === 'months' ? 4 : 240 / 365.25);
 
-type GanttMap = Pick<Roadmap, 'scale' | 'from' | 'to' | 'milestones'>;
+const barColor = (m: Pick<Milestone, 'color'>): React.CSSProperties =>
+    m.color && /^#[\da-f]{6}$/i.test(m.color)
+        ? ({
+              '--mv-gantt-bar-line': m.color,
+              '--mv-gantt-bar': `color-mix(in srgb, ${m.color} 28%, transparent)`,
+          } as React.CSSProperties)
+        : {};
+
+type GanttMap = Pick<Roadmap, 'scale' | 'from' | 'to' | 'milestones' | 'epics' | 'deadlines'>;
 
 /* ---------- блокировки: веха начинается не раньше, чем закончатся её блокеры ---------- */
 
@@ -135,15 +144,22 @@ export function Gantt({
     onChange,
     onOpen,
     onAdd,
+    onOpenEpic,
+    onAddEpic,
+    onOpenDeadline,
+    onAddDeadline,
     meta,
     progress,
 }: {
     roadmap: GanttMap;
     readOnly?: boolean;
-    /** плюсик «Новая веха» под списком */
     onAdd?: () => void;
     onChange?: (m: Milestone) => void;
     onOpen?: (id: string) => void;
+    onOpenEpic?: (id: string) => void;
+    onAddEpic?: () => void;
+    onOpenDeadline?: (id: string) => void;
+    onAddDeadline?: () => void;
     /** подпись под названием вехи, например сколько задач закрыто */
     meta?: (m: Milestone) => React.ReactNode;
     /** доля закрытых задач вехи (0…1) — заливка полосы; null — задач нет */
@@ -196,28 +212,48 @@ export function Gantt({
     const toToday = () =>
         scroller.current?.scrollTo({left: Math.max(0, x(today) - room / 4), behavior: 'smooth'});
 
-    // шкала: сверху годы, снизу месяцы или кварталы
+    // шкала: сверху годы, снизу недели, месяцы или кварталы
     const years: {key: string; left: number; w: number; label: string}[] = [];
     const cells: {key: string; left: number; w: number; label: string}[] = [];
     for (let y = +roadmap.from.slice(0, 4); y <= +roadmap.to.slice(0, 4); y++) {
         const a = Math.max(rs, toDay(`${y}-01-01`));
         const b = Math.min(re, toDay(`${y}-12-31`));
         years.push({key: String(y), left: x(a), w: (b - a + 1) * px, label: String(y)});
-        const step = roadmap.scale === 'months' ? 1 : 3;
-        for (let m = 1; m <= 12; m += step) {
-            const c0 = Math.max(rs, monthStart(ymOf(y, m)));
-            const c1 = Math.min(re, monthEnd(ymOf(y, m + step - 1)));
-            if (c0 > c1) continue;
+    }
+    if (roadmap.scale === 'weeks') {
+        // недели начинаются с понедельника; 1970-01-01 — четверг
+        for (let a = rs - ((rs + 3) % 7); a <= re; a += 7) {
+            const c0 = Math.max(rs, a);
+            const c1 = Math.min(re, a + 6);
+            const d = new Date(a * DAY);
             cells.push({
-                key: `${y}-${m}`,
+                key: String(a),
                 left: x(c0),
                 w: (c1 - c0 + 1) * px,
-                label: roadmap.scale === 'months' ? MONTHS_SHORT[m - 1] : `${(m + 2) / 3} кв`,
+                label: `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]}`,
             });
+        }
+    } else {
+        for (let y = +roadmap.from.slice(0, 4); y <= +roadmap.to.slice(0, 4); y++) {
+            const step = roadmap.scale === 'months' ? 1 : 3;
+            for (let m = 1; m <= 12; m += step) {
+                const c0 = Math.max(rs, monthStart(ymOf(y, m)));
+                const c1 = Math.min(re, monthEnd(ymOf(y, m + step - 1)));
+                if (c0 > c1) continue;
+                cells.push({
+                    key: `${y}-${m}`,
+                    left: x(c0),
+                    w: (c1 - c0 + 1) * px,
+                    label: roadmap.scale === 'months' ? MONTHS_SHORT[m - 1] : `${(m + 2) / 3} кв`,
+                });
+            }
         }
     }
 
     const items = [...roadmap.milestones].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
+    const epics = roadmap.epics ?? [];
+    const deadlines = [...(roadmap.deadlines ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+    const ungrouped = items.filter((m) => !epics.some((e) => e.id === m.epicId));
 
     const down = (e: React.PointerEvent, m: Milestone, mode: 'move' | 'start' | 'end') => {
         if (e.button !== 0) return;
@@ -265,13 +301,119 @@ export function Gantt({
         }
     };
 
+    const renderMilestone = (m: Milestone) => {
+        const p = preview && preview.id === m.id ? preview : null;
+        const s = p ? p.start : toDay(m.start);
+        const e = p ? p.end : toDay(m.end);
+        // веха за пределами периода прижимается к краю
+        const a = Math.min(Math.max(s, rs), re);
+        const b = Math.max(Math.min(e, re), a);
+        const left = x(a);
+        const w = Math.max(8, (b - a + 1) * px);
+        const dates = datesText({start: fromDay(s), end: fromDay(e)});
+        // сроки не влезают в короткую полосу: пишем их рядом, справа или, у края карты, слева
+        const textW = dates.length * 6.6 + 24;
+        const short = w < textW;
+        const done = progress?.(m) ?? null;
+        const outside = short ? (left + w + 6 + textW > width ? {right: width - left + 6} : {left: left + w + 6}) : null;
+        return (
+            <div key={m.id} className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}>
+                <button
+                    type="button"
+                    className={`mv-gantt__label${epics.length ? ' mv-gantt__label_nested' : ''}`}
+                    onClick={() => onOpen?.(m.id)}
+                    disabled={!onOpen}
+                    title={m.title}
+                >
+                    <span className="mv-gantt__name">{m.title || 'Без названия'}</span>
+                    {meta && <span className="mv-gantt__meta">{meta(m)}</span>}
+                </button>
+                <div className="mv-gantt__track" style={{width}}>
+                    <div
+                        className={`mv-gantt__bar${readOnly ? ' mv-gantt__bar_ro' : ''}${
+                            p ? ' mv-gantt__bar_drag' : ''
+                        }${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
+                        style={{...barColor(m), left, width: w}}
+                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}${
+                            done != null ? ` · задачи закрыты на ${Math.round(done * 100)}%` : ''
+                        }`}
+                        onPointerDown={(ev) => down(ev, m, 'move')}
+                        onPointerMove={move}
+                        onPointerUp={() => up(m)}
+                        onPointerCancel={() => {
+                            drag.current = null;
+                            setPreview(null);
+                        }}
+                        onClick={readOnly && onOpen ? () => onOpen(m.id) : undefined}
+                    >
+                        {done != null && (
+                            <span className="mv-gantt__fill" style={{width: `${done * 100}%`}} aria-hidden="true" />
+                        )}
+                        {!readOnly && (
+                            <span
+                                className="mv-gantt__handle mv-gantt__handle_start"
+                                onPointerDown={(ev) => down(ev, m, 'start')}
+                                onPointerMove={move}
+                                onPointerUp={() => up(m)}
+                                aria-hidden="true"
+                            />
+                        )}
+                        {!short && (
+                            <span className="mv-gantt__dates">
+                                {statusMark(m)}
+                                {dates}
+                            </span>
+                        )}
+                        {!readOnly && (
+                            <span
+                                className="mv-gantt__handle mv-gantt__handle_end"
+                                onPointerDown={(ev) => down(ev, m, 'end')}
+                                onPointerMove={move}
+                                onPointerUp={() => up(m)}
+                                aria-hidden="true"
+                            />
+                        )}
+                    </div>
+                    {outside && (
+                        <span className="mv-gantt__dates mv-gantt__dates_out" style={outside}>
+                            {statusMark(m)}
+                            {dates}
+                        </span>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    const renderEpic = (epic?: Epic) => {
+        const group = epic ? items.filter((m) => m.epicId === epic.id) : ungrouped;
+        return (
+            <div className="mv-gantt__row mv-gantt__row_epic">
+                <button
+                    type="button"
+                    className="mv-gantt__label mv-gantt__label_epic"
+                    onClick={() => epic && onOpenEpic?.(epic.id)}
+                    disabled={!epic || !onOpenEpic}
+                    title={epic?.title}
+                >
+                    <span className="mv-gantt__epic-name">
+                        <Icon data={Layers} size={14} />
+                        {epic?.title || 'Без эпика'}
+                    </span>
+                    <span className="mv-gantt__meta">{milestonesWord(group.length)}</span>
+                </button>
+                <div className="mv-gantt__track" style={{width}} />
+            </div>
+        );
+    };
+
     return (
         <div className="mv-gantt" ref={scroller}>
             <div className="mv-gantt__inner" style={{width: `calc(var(--mv-gantt-label) + ${width}px)`}}>
                 <div className="mv-gantt__head">
                     <div className="mv-gantt__label mv-gantt__label_head">
                         <Text variant="caption-2" color="secondary">
-                            Вехи
+                            {epics.length ? 'Эпики и вехи' : 'Вехи'}
                         </Text>
                         {hasToday && width > room + 1 && (
                             <Button view="flat-secondary" size="xs" className="mv-gantt__to-today" onClick={toToday}>
@@ -279,7 +421,7 @@ export function Gantt({
                             </Button>
                         )}
                     </div>
-                    <div className="mv-gantt__scale" style={{width}}>
+                    <div className={`mv-gantt__scale${deadlines.length ? ' mv-gantt__scale_deadlines' : ''}`} style={{width}}>
                         <div className="mv-gantt__years">
                             {years.map((y) => (
                                 <span key={y.key} className="mv-gantt__year" style={{left: y.left, width: y.w}}>
@@ -299,6 +441,31 @@ export function Gantt({
                                 сегодня
                             </span>
                         )}
+                        {deadlines.length > 0 && (
+                            <div className="mv-gantt__deadlines">
+                                {deadlines.map((d) => {
+                                    const day = Math.min(Math.max(toDay(d.date), rs), re);
+                                    const left = x(day) + px / 2;
+                                    const align = left < 90 ? 'start' : width - left < 90 ? 'end' : 'center';
+                                    const date = datesText({start: d.date, end: d.date});
+                                    return (
+                                        <button
+                                            key={d.id}
+                                            type="button"
+                                            className={`mv-gantt__deadline-label mv-gantt__deadline-label_${align}`}
+                                            style={{left}}
+                                            onClick={() => onOpenDeadline?.(d.id)}
+                                            disabled={!onOpenDeadline}
+                                            title={`${d.title || 'Дедлайн'} · ${date}`}
+                                        >
+                                            <Icon data={Flag} size={11} />
+                                            <span>{d.title || 'Дедлайн'}</span>
+                                            <span className="mv-gantt__deadline-date">{date}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -310,6 +477,10 @@ export function Gantt({
                         {years.map((y) => (
                             <span key={y.key} className="mv-gantt__line mv-gantt__line_year" style={{left: y.left}} />
                         ))}
+                        {deadlines.map((d) => {
+                            const day = Math.min(Math.max(toDay(d.date), rs), re);
+                            return <span key={d.id} className="mv-gantt__deadline-line" style={{left: x(day) + px / 2}} />;
+                        })}
                         {hasToday && (
                             <>
                                 <span className="mv-gantt__past" style={{width: x(today) + px / 2}} />
@@ -322,99 +493,36 @@ export function Gantt({
                         <div className="mv-gantt__empty">
                             <img src={logo} alt="" />
                             <Text color="secondary">
-                                {readOnly ? 'Вех пока нет.' : 'Вех пока нет. Добавьте первую кнопкой «Новая веха» ниже.'}
+                                {readOnly ? 'Вех пока нет.' : 'Вех пока нет. Добавьте первую кнопкой «Добавить веху» ниже.'}
                             </Text>
                         </div>
                     )}
 
-                    {items.map((m) => {
-                        const p = preview && preview.id === m.id ? preview : null;
-                        const s = p ? p.start : toDay(m.start);
-                        const e = p ? p.end : toDay(m.end);
-                        // веха за пределами периода прижимается к краю
-                        const a = Math.min(Math.max(s, rs), re);
-                        const b = Math.max(Math.min(e, re), a);
-                        const left = x(a);
-                        const w = Math.max(8, (b - a + 1) * px);
-                        const dates = datesText({start: fromDay(s), end: fromDay(e)});
-                        // сроки не влезают в короткую полосу: пишем их рядом, справа или, у края карты, слева
-                        const textW = dates.length * 6.6 + 24;
-                        const short = w < textW;
-                        const done = progress?.(m) ?? null;
-                        const outside = short ? (left + w + 6 + textW > width ? {right: width - left + 6} : {left: left + w + 6}) : null;
-                        return (
-                            <div key={m.id} className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}>
-                                <button
-                                    type="button"
-                                    className="mv-gantt__label"
-                                    onClick={() => onOpen?.(m.id)}
-                                    disabled={!onOpen}
-                                    title={m.title}
-                                >
-                                    <span className="mv-gantt__name">{m.title || 'Без названия'}</span>
-                                    {meta && <span className="mv-gantt__meta">{meta(m)}</span>}
-                                </button>
-                                <div className="mv-gantt__track" style={{width}}>
-                                    <div
-                                        className={`mv-gantt__bar${readOnly ? ' mv-gantt__bar_ro' : ''}${
-                                            p ? ' mv-gantt__bar_drag' : ''
-                                        }${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
-                                        style={{left, width: w}}
-                                        title={`${m.title}: ${dates}${m.status ? ` · ${statusText(m)}` : ''}${
-                                            done != null ? ` · задачи закрыты на ${Math.round(done * 100)}%` : ''
-                                        }`}
-                                        onPointerDown={(ev) => down(ev, m, 'move')}
-                                        onPointerMove={move}
-                                        onPointerUp={() => up(m)}
-                                        onPointerCancel={() => {
-                                            drag.current = null;
-                                            setPreview(null);
-                                        }}
-                                        onClick={readOnly && onOpen ? () => onOpen(m.id) : undefined}
-                                    >
-                                        {done != null && (
-                                            <span className="mv-gantt__fill" style={{width: `${done * 100}%`}} aria-hidden="true" />
-                                        )}
-                                        {!readOnly && (
-                                            <span
-                                                className="mv-gantt__handle mv-gantt__handle_start"
-                                                onPointerDown={(ev) => down(ev, m, 'start')}
-                                                onPointerMove={move}
-                                                onPointerUp={() => up(m)}
-                                                aria-hidden="true"
-                                            />
-                                        )}
-                                        {!short && (
-                                            <span className="mv-gantt__dates">
-                                                {statusMark(m)}
-                                                {dates}
-                                            </span>
-                                        )}
-                                        {!readOnly && (
-                                            <span
-                                                className="mv-gantt__handle mv-gantt__handle_end"
-                                                onPointerDown={(ev) => down(ev, m, 'end')}
-                                                onPointerMove={move}
-                                                onPointerUp={() => up(m)}
-                                                aria-hidden="true"
-                                            />
-                                        )}
-                                    </div>
-                                    {outside && (
-                                        <span className="mv-gantt__dates mv-gantt__dates_out" style={outside}>
-                                            {statusMark(m)}
-                                            {dates}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })}
+                    {epics.length > 0 ? (
+                        <>
+                            {epics.map((epic) => (
+                                <React.Fragment key={epic.id}>
+                                    {renderEpic(epic)}
+                                    {items.filter((m) => m.epicId === epic.id).map(renderMilestone)}
+                                </React.Fragment>
+                            ))}
+                            {ungrouped.length > 0 && (
+                                <>
+                                    {renderEpic()}
+                                    {ungrouped.map(renderMilestone)}
+                                </>
+                            )}
+                        </>
+                    ) : (
+                        items.map(renderMilestone)
+                    )}
 
-                    {onAdd && !readOnly && (
+                    {!readOnly && (onAdd || onAddEpic || onAddDeadline) && (
                         <div className="mv-gantt__row mv-gantt__row_add">
                             <div className="mv-gantt__label mv-gantt__label_add">
-                                <AddListItem onClick={onAdd}>Добавить веху</AddListItem>
+                                {onAdd && <AddListItem onClick={onAdd}>Добавить веху</AddListItem>}
+                                {onAddEpic && <AddListItem onClick={onAddEpic}>Добавить эпик</AddListItem>}
+                                {onAddDeadline && <AddListItem onClick={onAddDeadline}>Добавить дедлайн</AddListItem>}
                             </div>
                         </div>
                     )}
@@ -470,7 +578,7 @@ function defaults(scale: RoadmapScale): Pick<Roadmap, 'from' | 'to'> {
     const d = new Date();
     const y = d.getFullYear();
     if (scale === 'years') return {from: ymOf(y, 1), to: ymOf(y + 2, 12)};
-    const end = new Date(y, d.getMonth() + 11, 1);
+    const end = new Date(y, d.getMonth() + (scale === 'weeks' ? 2 : 11), 1);
     return {from: ymOf(y, d.getMonth() + 1), to: ymOf(end.getFullYear(), end.getMonth() + 1)};
 }
 
@@ -522,6 +630,7 @@ function SettingsDialog({
                                 setS(norm(initial ? {...s, scale} : {...s, scale, ...defaults(scale)}));
                             }}
                         >
+                            <SegmentedRadioGroup.Option value="weeks">Недели</SegmentedRadioGroup.Option>
                             <SegmentedRadioGroup.Option value="months">Месяцы</SegmentedRadioGroup.Option>
                             <SegmentedRadioGroup.Option value="years">Годы</SegmentedRadioGroup.Option>
                         </SegmentedRadioGroup>
@@ -626,7 +735,14 @@ export function RoadmapsView(p: RoadmapsProps) {
                 open={creating}
                 onClose={() => setCreating(false)}
                 onApply={(s) => {
-                    const r: Roadmap = {id: uid(), ...s, milestones: [], createdAt: new Date().toISOString()};
+                    const r: Roadmap = {
+                        id: uid(),
+                        ...s,
+                        milestones: [],
+                        epics: [],
+                        deadlines: [],
+                        createdAt: new Date().toISOString(),
+                    };
                     p.onSave(r);
                     setCreating(false);
                     p.onOpenMap(r.id);
@@ -653,11 +769,14 @@ function MiniTimeline({map}: {map: Roadmap}) {
                     <span
                         key={m.id}
                         className={`mv-map-card__strip-bar${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
-                        style={{left: pct(a), width: `calc(${pct(b)} - ${pct(a)})`, top: 12 + i * 7}}
+                        style={{...barColor(m), left: pct(a), width: `calc(${pct(b)} - ${pct(a)})`, top: 12 + i * 7}}
                     />
                 );
             })}
             <span className="mv-map-card__strip-axis" />
+            {(map.deadlines ?? []).map((d) => (
+                <span key={d.id} className="mv-map-card__strip-deadline" style={{left: pct(toDay(d.date) + 0.5)}} />
+            ))}
             {today >= rs && today <= re && <span className="mv-map-card__strip-today" style={{left: pct(today)}} />}
         </span>
     );
@@ -674,7 +793,11 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
     const [title, setTitle] = React.useState(map.title);
     const [settings, setSettings] = React.useState(false);
     const [sharing, setSharing] = React.useState(false);
+    const [epicId, setEpicId] = React.useState<string | null>(null);
+    const [deadlineId, setDeadlineId] = React.useState<string | null>(null);
     const milestone = map.milestones.find((m) => m.id === p.milestoneId);
+    const epic = (map.epics ?? []).find((e) => e.id === epicId);
+    const deadline = (map.deadlines ?? []).find((d) => d.id === deadlineId);
 
     // правки накладываем на самую свежую версию карты: текст сохраняется с задержкой
     const mapRef = React.useRef(map);
@@ -683,10 +806,14 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
     const auto = useAutosave<Roadmap>(saveMap);
     const patchMilestone = (id: string, patch: Partial<Milestone>) =>
         saveMap({milestones: mapRef.current.milestones.map((x) => (x.id === id ? {...x, ...patch} : x))});
+    const patchEpic = (id: string, patch: Partial<Epic>) =>
+        saveMap({epics: (mapRef.current.epics ?? []).map((x) => (x.id === id ? {...x, ...patch} : x))});
+    const patchDeadline = (id: string, patch: Partial<Deadline>) =>
+        saveMap({deadlines: (mapRef.current.deadlines ?? []).map((x) => (x.id === id ? {...x, ...patch} : x))});
     const addMilestone = () => {
         const rs = monthStart(map.from);
         const re = monthEnd(map.to);
-        const len = map.scale === 'months' ? 29 : 89;
+        const len = map.scale === 'weeks' ? 6 : map.scale === 'months' ? 29 : 89;
         const start = Math.max(rs, Math.min(toDay(dayKey()), re - len));
         const m: Milestone = {id: uid(), title: 'Новая веха', start: fromDay(start), end: fromDay(Math.min(re, start + len))};
         p.onSave({...map, milestones: [...map.milestones, m]});
@@ -696,6 +823,32 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.onOpenMilestone(null);
         p.onSave({...map, milestones: map.milestones.filter((x) => x.id !== m.id)});
         p.undoable(`Веха «${m.title}» удалена`, () => p.onSave({...map}));
+    };
+    const addEpic = () => {
+        const item: Epic = {id: uid(), title: 'Новый эпик'};
+        p.onSave({...map, epics: [...(map.epics ?? []), item]});
+        setEpicId(item.id);
+    };
+    const removeEpic = (item: Epic) => {
+        setEpicId(null);
+        p.onSave({
+            ...map,
+            epics: (map.epics ?? []).filter((x) => x.id !== item.id),
+            milestones: map.milestones.map((m) => (m.epicId === item.id ? {...m, epicId: null} : m)),
+        });
+        p.undoable(`Эпик «${item.title}» удалён`, () => p.onSave({...map}));
+    };
+    const addDeadline = () => {
+        const rs = monthStart(map.from);
+        const re = monthEnd(map.to);
+        const item: Deadline = {id: uid(), title: 'Новый дедлайн', date: fromDay(Math.min(Math.max(toDay(dayKey()), rs), re))};
+        p.onSave({...map, deadlines: [...(map.deadlines ?? []), item]});
+        setDeadlineId(item.id);
+    };
+    const removeDeadline = (item: Deadline) => {
+        setDeadlineId(null);
+        p.onSave({...map, deadlines: (map.deadlines ?? []).filter((x) => x.id !== item.id)});
+        p.undoable(`Дедлайн «${item.title}» удалён`, () => p.onSave({...map}));
     };
     const linked = (id: string) => p.tasks.filter((t) => t.milestoneId === id);
 
@@ -773,6 +926,10 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 }
                 onOpen={(id) => p.onOpenMilestone(id)}
                 onAdd={p.disabled ? undefined : addMilestone}
+                onOpenEpic={setEpicId}
+                onAddEpic={p.disabled ? undefined : addEpic}
+                onOpenDeadline={setDeadlineId}
+                onAddDeadline={p.disabled ? undefined : addDeadline}
                 meta={(m) => {
                     const ts = linked(m.id);
                     return milestoneMeta(
@@ -810,6 +967,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         key={milestone.id}
                         milestone={milestone}
                         all={map.milestones}
+                        epics={map.epics ?? []}
                         scale={map}
                         tasks={linked(milestone.id)}
                         linkable={p.tasks.filter((t) => !t.done && t.milestoneId !== milestone.id)}
@@ -820,6 +978,38 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         onOpenTask={p.onOpenTask}
                         onLinkTask={p.onLinkTask}
                         onToggleTask={p.onToggleTask}
+                    />
+                )}
+            </Dialog>
+
+            <Dialog open={Boolean(epic)} onClose={() => setEpicId(null)} hasCloseButton={false} size="s" aria-label="Эпик">
+                {epic && (
+                    <EpicDetails
+                        key={epic.id}
+                        epic={epic}
+                        count={map.milestones.filter((m) => m.epicId === epic.id).length}
+                        onSave={(patch) => patchEpic(epic.id, patch)}
+                        onDelete={() => removeEpic(epic)}
+                        onClose={() => setEpicId(null)}
+                    />
+                )}
+            </Dialog>
+
+            <Dialog
+                open={Boolean(deadline)}
+                onClose={() => setDeadlineId(null)}
+                hasCloseButton={false}
+                size="s"
+                aria-label="Дедлайн"
+            >
+                {deadline && (
+                    <DeadlineDetails
+                        key={deadline.id}
+                        deadline={deadline}
+                        scale={map}
+                        onSave={(patch) => patchDeadline(deadline.id, patch)}
+                        onDelete={() => removeDeadline(deadline)}
+                        onClose={() => setDeadlineId(null)}
                     />
                 )}
             </Dialog>
@@ -842,8 +1032,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         {map.shareId ? (
                             <>
                                 <Text color="secondary">
-                                    По ссылке карту увидит любой, даже без аккаунта: описание, вехи, сроки, ответственных и
-                                    блокировки, но без задач. Менять ничего нельзя.
+                                    По ссылке карту увидит любой, даже без аккаунта: описание, эпики, вехи, дедлайны,
+                                    ответственных и блокировки, но без задач. Менять ничего нельзя.
                                 </Text>
                                 <TextInput
                                     readOnly
@@ -859,8 +1049,9 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         ) : (
                             <>
                                 <Text color="secondary">
-                                    Включите ссылку, чтобы показать карту тем, у кого нет аккаунта. Они увидят описание, вехи,
-                                    сроки, ответственных и блокировки, но не задачи. Ссылку можно выключить в любой момент.
+                                    Включите ссылку, чтобы показать карту тем, у кого нет аккаунта. Они увидят описание, эпики,
+                                    вехи, дедлайны, ответственных и блокировки, но не задачи. Ссылку можно выключить в любой
+                                    момент.
                                 </Text>
                                 <Button view="action" size="m" onClick={() => p.onShare(map.id)}>
                                     <Icon data={Globe} size={16} />
@@ -871,6 +1062,141 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     </div>
                 </Dialog.Body>
             </Dialog>
+        </div>
+    );
+}
+
+function EpicDetails({
+    epic,
+    count,
+    onSave,
+    onDelete,
+    onClose,
+}: {
+    epic: Epic;
+    count: number;
+    onSave: (p: Partial<Epic>) => Promise<void> | null;
+    onDelete: () => void;
+    onClose: () => void;
+}) {
+    const [title, setTitle] = React.useState(epic.title);
+    const auto = useAutosave<Epic>(onSave);
+    const close = () => {
+        auto.flush();
+        onClose();
+    };
+    return (
+        <div className="mv-details mv-details_popup">
+            <div className="mv-details__head">
+                <Label theme="utility" size="s" icon={<Icon data={Layers} size={12} />}>
+                    Эпик
+                </Label>
+                <SaveStatus state={auto.state} idle={milestonesWord(count)} />
+                <div className="mv-details__actions">
+                    <ActionTooltip title="Удалить эпик">
+                        <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить эпик">
+                            <Icon data={TrashBin} size={16} />
+                        </Button>
+                    </ActionTooltip>
+                </div>
+                <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
+                    <Icon data={Xmark} size={16} />
+                </Button>
+            </div>
+            <TextInput
+                view="clear"
+                size="xl"
+                className="mv-map__title"
+                value={title}
+                onUpdate={(v) => {
+                    setTitle(v);
+                    if (v.trim()) auto.schedule({title: v.trim()});
+                }}
+                onBlur={() => {
+                    if (!title.trim()) setTitle(epic.title);
+                    auto.flush();
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                placeholder="Название эпика"
+                aria-label="Название эпика"
+            />
+            <Text color="secondary">
+                Эпик объединяет вехи в отдельную группу на дорожной карте. При удалении эпика его вехи останутся в группе
+                «Без эпика».
+            </Text>
+        </div>
+    );
+}
+
+function DeadlineDetails({
+    deadline,
+    scale,
+    onSave,
+    onDelete,
+    onClose,
+}: {
+    deadline: Deadline;
+    scale: Pick<Roadmap, 'from' | 'to'>;
+    onSave: (p: Partial<Deadline>) => Promise<void> | null;
+    onDelete: () => void;
+    onClose: () => void;
+}) {
+    const [title, setTitle] = React.useState(deadline.title);
+    const auto = useAutosave<Deadline>(onSave);
+    const close = () => {
+        auto.flush();
+        onClose();
+    };
+    return (
+        <div className="mv-details mv-details_popup">
+            <div className="mv-details__head">
+                <Label theme="danger" size="s" icon={<Icon data={Flag} size={12} />}>
+                    Дедлайн
+                </Label>
+                <SaveStatus state={auto.state} idle={datesText({start: deadline.date, end: deadline.date})} />
+                <div className="mv-details__actions">
+                    <ActionTooltip title="Удалить дедлайн">
+                        <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить дедлайн">
+                            <Icon data={TrashBin} size={16} />
+                        </Button>
+                    </ActionTooltip>
+                </div>
+                <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
+                    <Icon data={Xmark} size={16} />
+                </Button>
+            </div>
+            <TextInput
+                view="clear"
+                size="xl"
+                className="mv-map__title"
+                value={title}
+                onUpdate={(v) => {
+                    setTitle(v);
+                    if (v.trim()) auto.schedule({title: v.trim()});
+                }}
+                onBlur={() => {
+                    if (!title.trim()) setTitle(deadline.title);
+                    auto.flush();
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                placeholder="Что должно быть готово"
+                aria-label="Название дедлайна"
+            />
+            <section className="mv-field">
+                <Text variant="subheader-1">Дата</Text>
+                <label className="mv-date-field">
+                    <Text variant="caption-2" color="secondary">
+                        Контрольный день
+                    </Text>
+                    <input
+                        type="date"
+                        value={deadline.date}
+                        min={fromDay(monthStart(scale.from))}
+                        max={fromDay(monthEnd(scale.to))}
+                        onChange={(e) => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && auto.save({date: e.target.value})}
+                    />
+                </label>
+            </section>
         </div>
     );
 }
@@ -916,6 +1242,7 @@ const shareUrl = (id: string) => `${window.location.origin}/?roadmap=${id}`;
 function MilestoneDetails({
     milestone,
     all,
+    epics,
     scale,
     tasks,
     linkable,
@@ -930,6 +1257,7 @@ function MilestoneDetails({
     milestone: Milestone;
     /** все вехи карты — для блокировок */
     all: Milestone[];
+    epics: Epic[];
     scale: Pick<Roadmap, 'from' | 'to'>;
     tasks: Task[];
     linkable: Task[];
@@ -1047,6 +1375,67 @@ function MilestoneDetails({
                         />
                     </label>
                 </div>
+            </section>
+
+            {epics.length > 0 && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Эпик</Text>
+                    <Select
+                        width="max"
+                        value={[milestone.epicId ?? '']}
+                        onUpdate={([v]) => auto.save({epicId: v || null})}
+                        options={[
+                            {value: '', content: 'Без эпика'},
+                            ...epics.map((e) => ({value: e.id, content: e.title})),
+                        ]}
+                        aria-label="Эпик"
+                    />
+                </section>
+            )}
+
+            <section className="mv-field">
+                <Text variant="subheader-1">Цвет полосы</Text>
+                <div className="mv-color-picker">
+                    <Button
+                        size="s"
+                        view={milestone.color ? 'outlined' : 'action'}
+                        onClick={() => auto.save({color: undefined})}
+                    >
+                        Авто
+                    </Button>
+                    {[
+                        {value: '#3697f1', name: 'Синий'},
+                        {value: '#30aa6e', name: 'Зелёный'},
+                        {value: '#eaa000', name: 'Жёлтый'},
+                        {value: '#e05d4f', name: 'Красный'},
+                        {value: '#8c5ac7', name: 'Фиолетовый'},
+                        {value: '#d9579b', name: 'Розовый'},
+                        {value: '#718096', name: 'Серый'},
+                    ].map((c) => (
+                        <button
+                            key={c.value}
+                            type="button"
+                            className={`mv-color-picker__swatch${milestone.color === c.value ? ' mv-color-picker__swatch_on' : ''}`}
+                            style={{background: c.value}}
+                            onClick={() => auto.save({color: c.value})}
+                            aria-label={c.name}
+                            aria-pressed={milestone.color === c.value}
+                            title={c.name}
+                        />
+                    ))}
+                    <label className="mv-color-picker__custom" title="Выбрать другой цвет">
+                        <input
+                            type="color"
+                            value={milestone.color ?? '#3697f1'}
+                            onChange={(e) => auto.save({color: e.target.value})}
+                            aria-label="Свой цвет полосы"
+                        />
+                        <span>Свой цвет</span>
+                    </label>
+                </div>
+                <Text variant="caption-2" color="secondary">
+                    «Авто» меняет цвет по статусу вехи. Выбранный цвет сохраняется при любом статусе.
+                </Text>
             </section>
 
             <section className="mv-field">
@@ -1237,9 +1626,20 @@ function Markdown({text}: {text: string}) {
 }
 
 /** Веха по публичной ссылке: только чтение, без задач */
-function MilestoneView({milestone, all, onOpen}: {milestone: Milestone; all: Milestone[]; onOpen: (id: string) => void}) {
+function MilestoneView({
+    milestone,
+    all,
+    epics,
+    onOpen,
+}: {
+    milestone: Milestone;
+    all: Milestone[];
+    epics: Epic[];
+    onOpen: (id: string) => void;
+}) {
     const blockers = blockersOf(milestone, all);
     const blocks = dependentsOf(milestone, all);
+    const epic = epics.find((e) => e.id === milestone.epicId);
     const links = (list: Milestone[]) =>
         list.map((x, i) => (
             <React.Fragment key={x.id}>
@@ -1259,6 +1659,12 @@ function MilestoneView({milestone, all, onOpen}: {milestone: Milestone; all: Mil
             <Text variant="header-1" as="h2" className="mv-ms-title">
                 {milestone.title}
             </Text>
+            {epic && (
+                <section className="mv-field">
+                    <Text variant="subheader-1">Эпик</Text>
+                    <Text>{epic.title}</Text>
+                </section>
+            )}
             <section className="mv-field">
                 <Text variant="subheader-1">Сроки</Text>
                 <Text>{datesText(milestone)}</Text>
@@ -1294,8 +1700,28 @@ function MilestoneView({milestone, all, onOpen}: {milestone: Milestone; all: Mil
     );
 }
 
+function DeadlineView({deadline}: {deadline: Deadline}) {
+    return (
+        <div className="mv-details mv-details_popup">
+            <div className="mv-details__head">
+                <Label theme="danger" size="s" icon={<Icon data={Flag} size={12} />}>
+                    Дедлайн
+                </Label>
+            </div>
+            <Text variant="header-1" as="h2" className="mv-ms-title">
+                {deadline.title}
+            </Text>
+            <section className="mv-field">
+                <Text variant="subheader-1">Дата</Text>
+                <Text>{datesText({start: deadline.date, end: deadline.date})}</Text>
+            </section>
+        </div>
+    );
+}
+
 export function SharedRoadmap({id}: {id: string}) {
     const [openId, setOpenId] = React.useState<string | null>(null);
+    const [deadlineId, setDeadlineId] = React.useState<string | null>(null);
     type Shared = Awaited<ReturnType<typeof loadSharedRoadmap>>;
     const [state, setState] = React.useState<{kind: 'loading'} | {kind: 'error'} | {kind: 'ready'; map: Shared}>({
         kind: 'loading',
@@ -1359,6 +1785,7 @@ export function SharedRoadmap({id}: {id: string}) {
                             roadmap={state.map}
                             readOnly
                             onOpen={setOpenId}
+                            onOpenDeadline={setDeadlineId}
                             meta={(m) => milestoneMeta(m, (state.map as GanttMap).milestones)}
                         />
                         {state.map.description?.trim() && <Markdown text={state.map.description} />}
@@ -1369,12 +1796,32 @@ export function SharedRoadmap({id}: {id: string}) {
                 Только просмотр. Сделано в Муравье.
             </Text>
             {(() => {
-                const all = state.kind === 'ready' && state.map ? state.map.milestones : [];
+                const ready = state.kind === 'ready' && state.map ? state.map : null;
+                const all = ready?.milestones ?? [];
                 const m = all.find((x) => x.id === openId);
+                const deadline = ready?.deadlines?.find((d) => d.id === deadlineId);
                 return (
-                    <Dialog open={Boolean(m)} onClose={() => setOpenId(null)} size="m" aria-label="Веха">
-                        {m && <MilestoneView key={m.id} milestone={m} all={all} onOpen={setOpenId} />}
-                    </Dialog>
+                    <>
+                        <Dialog open={Boolean(m)} onClose={() => setOpenId(null)} size="m" aria-label="Веха">
+                            {m && (
+                                <MilestoneView
+                                    key={m.id}
+                                    milestone={m}
+                                    all={all}
+                                    epics={ready?.epics ?? []}
+                                    onOpen={setOpenId}
+                                />
+                            )}
+                        </Dialog>
+                        <Dialog
+                            open={Boolean(deadline)}
+                            onClose={() => setDeadlineId(null)}
+                            size="s"
+                            aria-label="Дедлайн"
+                        >
+                            {deadline && <DeadlineView deadline={deadline} />}
+                        </Dialog>
+                    </>
                 );
             })()}
         </div>

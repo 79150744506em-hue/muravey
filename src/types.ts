@@ -35,7 +35,20 @@ export interface Tag {
     createdAt: string;
 }
 
-export type RoadmapScale = 'months' | 'years';
+export type RoadmapScale = 'weeks' | 'months' | 'years';
+
+/** Эпик объединяет вехи дорожной карты. */
+export interface Epic {
+    id: string;
+    title: string;
+}
+
+/** Контрольная дата на шкале дорожной карты. */
+export interface Deadline {
+    id: string;
+    title: string;
+    date: string; // YYYY-MM-DD
+}
 
 /** Веха дорожной карты: полоса на ганте от start до end включительно. */
 export interface Milestone {
@@ -51,6 +64,10 @@ export interface Milestone {
     status?: MilestoneStatus;
     /** описание риска, когда status === 'risk' */
     risk?: string;
+    /** собственный цвет полосы, #RRGGBB; без него цвет определяется статусом */
+    color?: string;
+    /** эпик, к которому относится веха */
+    epicId?: string | null;
 }
 
 export type MilestoneStatus = 'done' | 'risk';
@@ -66,6 +83,8 @@ export interface Roadmap {
     from: string;
     to: string;
     milestones: Milestone[];
+    epics?: Epic[];
+    deadlines?: Deadline[];
     createdAt: string;
     /** ключ публичной ссылки; выдаёт и отзывает сервер */
     shareId?: string | null;

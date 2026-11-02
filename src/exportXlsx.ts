@@ -23,7 +23,10 @@ const plain = (md: string) =>
         .replace(/^\s*[-*]\s+/gm, '• ')
         .trim();
 
-export type ExportMap = Pick<Roadmap, 'title' | 'description' | 'scale' | 'from' | 'to' | 'milestones'>;
+export type ExportMap = Pick<
+    Roadmap,
+    'title' | 'description' | 'scale' | 'from' | 'to' | 'milestones' | 'epics' | 'deadlines'
+>;
 
 /**
  * Дорожная карта в xlsx: лист «Вехи» — таблица, а справа от неё таймлайн с закрашенными ячейками.
@@ -33,6 +36,7 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Муравей';
     const byId = new Map(map.milestones.map((m) => [m.id, m]));
+    const epicById = new Map((map.epics ?? []).map((e) => [e.id, e.title]));
     const items = [...map.milestones].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
     const blockers = (m: Milestone) =>
         (m.blockedBy ?? [])
@@ -44,6 +48,7 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
     const ws = wb.addWorksheet('Вехи');
     const cols = [
         {header: 'Веха', width: 36},
+        {header: 'Эпик', width: 28},
         {header: 'Начало', width: 13},
         {header: 'Конец', width: 13},
         {header: 'Дней', width: 8},
@@ -82,27 +87,28 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         row++;
         const r = ws.getRow(row);
         r.getCell(1).value = m.title;
-        r.getCell(2).value = asDate(m.start);
-        r.getCell(3).value = asDate(m.end);
-        r.getCell(2).numFmt = r.getCell(3).numFmt = 'dd.mm.yyyy';
-        r.getCell(4).value = toDay(m.end) - toDay(m.start) + 1;
-        r.getCell(5).value = m.status ? STATUS[m.status] : 'В работе';
-        r.getCell(6).value = m.status === 'risk' ? (m.risk ?? '').trim() : '';
-        r.getCell(7).value = m.owner ?? '';
-        r.getCell(8).value = blockers(m);
+        r.getCell(2).value = (m.epicId && epicById.get(m.epicId)) || '';
+        r.getCell(3).value = asDate(m.start);
+        r.getCell(4).value = asDate(m.end);
+        r.getCell(3).numFmt = r.getCell(4).numFmt = 'dd.mm.yyyy';
+        r.getCell(5).value = toDay(m.end) - toDay(m.start) + 1;
+        r.getCell(6).value = m.status ? STATUS[m.status] : 'В работе';
+        r.getCell(7).value = m.status === 'risk' ? (m.risk ?? '').trim() : '';
+        r.getCell(8).value = m.owner ?? '';
+        r.getCell(9).value = blockers(m);
         if (tasksOf) {
             const ts = tasksOf(m);
-            r.getCell(9).value = ts.map((t) => `${t.done ? '✓' : '○'} ${t.title}`).join('\n');
+            r.getCell(10).value = ts.map((t) => `${t.done ? '✓' : '○'} ${t.title}`).join('\n');
         }
         r.eachCell((c) => (c.alignment = {wrapText: true, vertical: 'top'}));
-        if (m.status) r.getCell(5).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: m.status === 'done' ? DONE : RISK}};
+        if (m.status) r.getCell(6).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: m.status === 'done' ? DONE : RISK}};
     }
 
     /* ---------- таймлайн справа от таблицы: недели (у масштаба «Годы» — месяцы) ---------- */
     const rs = toDay(map.from + '-01');
     const re = Math.round(Date.UTC(+map.to.slice(0, 4), +map.to.slice(5, 7), 0) / DAY);
     const slots: {a: number; b: number; key: string; group: string; label: string}[] = [];
-    if (map.scale === 'months') {
+    if (map.scale !== 'years') {
         // недели с понедельника; 1970-01-01 — четверг
         let a = rs - ((rs + 3) % 7);
         while (a <= re) {
@@ -127,7 +133,7 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         }
     }
     const first = last + 2; // одна пустая колонка между таблицей и таймлайном
-    slots.forEach((_, k) => (ws.getColumn(first + k).width = map.scale === 'months' ? 3.2 : 4.5));
+    slots.forEach((_, k) => (ws.getColumn(first + k).width = map.scale === 'years' ? 4.5 : 3.2));
     const headRow = ws.getRow(row - items.length);
     const groupRow = ws.getRow(row - items.length - 1);
     let k = 0;
@@ -153,7 +159,8 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         const r = ws.getRow(headRow.number + 1 + i);
         const s = toDay(m.start);
         const e = toDay(m.end);
-        const color = m.status === 'done' ? DONE : m.status === 'risk' ? RISK : BAR;
+        const custom = m.color && /^#[\da-f]{6}$/i.test(m.color) ? `FF${m.color.slice(1).toUpperCase()}` : null;
+        const color = custom ?? (m.status === 'done' ? DONE : m.status === 'risk' ? RISK : BAR);
         slots.forEach((slot, n) => {
             if (slot.a <= e && slot.b >= s) {
                 r.getCell(first + n).fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: color}};
@@ -161,6 +168,25 @@ export async function exportRoadmap(map: ExportMap, period: string, tasksOf?: (m
         });
     });
     ws.views = [{state: 'frozen', xSplit: 1, ySplit: headRow.number}];
+
+    const deadlines = [...(map.deadlines ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+    if (deadlines.length) {
+        const wd = wb.addWorksheet('Дедлайны');
+        wd.getColumn(1).width = 48;
+        wd.getColumn(2).width = 16;
+        wd.getRow(1).values = ['Дедлайн', 'Дата'];
+        wd.getRow(1).eachCell((c) => {
+            c.font = {bold: true};
+            c.fill = {type: 'pattern', pattern: 'solid', fgColor: {argb: HEAD}};
+        });
+        deadlines.forEach((d, i) => {
+            const r = wd.getRow(i + 2);
+            r.getCell(1).value = d.title;
+            r.getCell(2).value = asDate(d.date);
+            r.getCell(2).numFmt = 'dd.mm.yyyy';
+        });
+        wd.views = [{state: 'frozen', ySplit: 1}];
+    }
 
     const buf = await wb.xlsx.writeBuffer();
     const url = URL.createObjectURL(

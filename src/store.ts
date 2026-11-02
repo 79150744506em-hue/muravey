@@ -499,7 +499,9 @@ async function findServer(): Promise<{google?: string} | null> {
 }
 
 /** Дорожная карта по публичной ссылке: всё, кроме привязанных задач. null — ссылку выключили или её нет. */
-export async function loadSharedRoadmap(id: string): Promise<Pick<Roadmap, 'title' | 'description' | 'scale' | 'from' | 'to' | 'milestones'> | null> {
+export async function loadSharedRoadmap(
+    id: string,
+): Promise<Pick<Roadmap, 'title' | 'description' | 'scale' | 'from' | 'to' | 'milestones' | 'epics' | 'deadlines'> | null> {
     try {
         return (await api({action: 'sharedRoadmap', id})).roadmap;
     } catch (e) {
