@@ -1,5 +1,19 @@
 import React from 'react';
 import {
+    DndContext,
+    DragOverlay,
+    KeyboardSensor,
+    MouseSensor,
+    TouchSensor,
+    closestCenter,
+    useDraggable,
+    useDroppable,
+    useSensor,
+    useSensors,
+} from '@dnd-kit/core';
+import type {DragEndEvent} from '@dnd-kit/core';
+import {sortableKeyboardCoordinates} from '@dnd-kit/sortable';
+import {
     ActionTooltip,
     Button,
     ClipboardButton,
@@ -10,6 +24,7 @@ import {
     Loader,
     SegmentedRadioGroup,
     Select,
+    Slider,
     Text,
     TextArea,
     TextInput,
@@ -17,14 +32,19 @@ import {
 import {
     ArrowDownToLine,
     ArrowLeft,
+    ChevronDown,
+    ChevronRight,
     CircleCheck,
     CircleCheckFill,
     Flag,
     Gear,
     Globe,
+    Grip,
     Layers,
     LinkSlash,
     Lock,
+    MagnifierMinus,
+    MagnifierPlus,
     Person,
     Plus,
     TrashBin,
@@ -138,10 +158,96 @@ function pushLater(all: Milestone[], id: string, re: number): Milestone[] {
     return list;
 }
 
+const ZOOM_KEY = 'muravey:roadmap-zoom';
+const MIN_ZOOM = 50;
+const MAX_ZOOM = 200;
+
+function initialZoom() {
+    try {
+        const value = Number(localStorage.getItem(ZOOM_KEY));
+        return Number.isFinite(value) && value >= MIN_ZOOM && value <= MAX_ZOOM ? value : 100;
+    } catch {
+        return 100;
+    }
+}
+
+function MilestoneLabel({
+    milestone,
+    nested,
+    draggable,
+    onOpen,
+    meta,
+}: {
+    milestone: Milestone;
+    nested: boolean;
+    draggable: boolean;
+    onOpen?: (id: string) => void;
+    meta?: React.ReactNode;
+}) {
+    const drag = useDraggable({id: milestone.id, disabled: !draggable});
+    return (
+        <div
+            ref={drag.setNodeRef}
+            className={`mv-gantt__label mv-gantt__label_milestone${nested ? ' mv-gantt__label_nested' : ''}${
+                drag.isDragging ? ' mv-gantt__label_dragging' : ''
+            }`}
+        >
+            <button
+                type="button"
+                className="mv-gantt__open"
+                onClick={() => onOpen?.(milestone.id)}
+                disabled={!onOpen}
+                title={milestone.title}
+            >
+                <span className="mv-gantt__name">{milestone.title || 'Без названия'}</span>
+                {meta && <span className="mv-gantt__meta">{meta}</span>}
+            </button>
+            {draggable && (
+                <ActionTooltip title="Перетащить в другой эпик">
+                    <button
+                        ref={drag.setActivatorNodeRef}
+                        type="button"
+                        className="mv-gantt__drag-handle"
+                        {...drag.attributes}
+                        {...drag.listeners}
+                        aria-label={`Перетащить веху «${milestone.title}» в другой эпик`}
+                        aria-roledescription="перетаскиваемая веха"
+                        data-milestone-drag={milestone.id}
+                    >
+                        <Icon data={Grip} size={15} />
+                    </button>
+                </ActionTooltip>
+            )}
+        </div>
+    );
+}
+
+function EpicDropRow({
+    epicId,
+    disabled,
+    children,
+}: {
+    epicId: string | null;
+    disabled: boolean;
+    children: React.ReactNode;
+}) {
+    const drop = useDroppable({id: `epic:${epicId ?? ''}`, disabled});
+    return (
+        <div
+            ref={drop.setNodeRef}
+            className={`mv-gantt__row mv-gantt__row_epic${drop.isOver ? ' mv-gantt__row_drop' : ''}`}
+            data-epic-id={epicId ?? ''}
+        >
+            {children}
+        </div>
+    );
+}
+
 export function Gantt({
     roadmap,
     readOnly = false,
     onChange,
+    onMoveToEpic,
     onOpen,
     onAdd,
     onOpenEpic,
@@ -155,6 +261,7 @@ export function Gantt({
     readOnly?: boolean;
     onAdd?: () => void;
     onChange?: (m: Milestone) => void;
+    onMoveToEpic?: (id: string, epicId: string | null) => void;
     onOpen?: (id: string) => void;
     onOpenEpic?: (id: string) => void;
     onAddEpic?: () => void;
@@ -168,8 +275,23 @@ export function Gantt({
     const rs = monthStart(roadmap.from);
     const re = monthEnd(roadmap.to);
     const scroller = React.useRef<HTMLDivElement>(null);
-    // короткий период растягиваем на всю ширину, длинный прокручивается вбок
     const [room, setRoom] = React.useState(0);
+    const [zoom, setZoom] = React.useState(initialZoom);
+    const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set());
+    const [activeId, setActiveId] = React.useState<string | null>(null);
+    const zoomAnchor = React.useRef<number | null>(null);
+    const sensors = useSensors(
+        useSensor(MouseSensor, {activationConstraint: {distance: 5}}),
+        useSensor(TouchSensor, {activationConstraint: {delay: 200, tolerance: 6}}),
+        useSensor(KeyboardSensor, {coordinateGetter: sortableKeyboardCoordinates}),
+    );
+    React.useEffect(() => {
+        try {
+            localStorage.setItem(ZOOM_KEY, String(zoom));
+        } catch {
+            /* масштаб просто не сохранится между открытиями */
+        }
+    }, [zoom]);
     React.useEffect(() => {
         const el = scroller.current;
         if (!el) return;
@@ -178,10 +300,24 @@ export function Gantt({
         ro.observe(el);
         return () => ro.disconnect();
     }, []);
-    const px = Math.max(dayPx(roadmap.scale), room / (re - rs + 1));
+    // при 100% короткий период по-прежнему занимает всю ширину, длинный прокручивается
+    const px = Math.max(dayPx(roadmap.scale), room / (re - rs + 1)) * (zoom / 100);
     const width = Math.floor((re - rs + 1) * px);
     const x = (d: number) => (d - rs) * px;
     const today = toDay(dayKey());
+    const changeZoom = (value: number) => {
+        const el = scroller.current;
+        if (el && room > 0) zoomAnchor.current = rs + (el.scrollLeft + room / 2) / px;
+        setZoom(value);
+    };
+    React.useLayoutEffect(() => {
+        const el = scroller.current;
+        if (el && zoomAnchor.current !== null) {
+            el.scrollLeft = Math.max(0, x(zoomAnchor.current) - room / 2);
+            zoomAnchor.current = null;
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [zoom]);
 
     // пока тянем полосу, новые сроки живут здесь, а сохраняются, когда отпустили
     const [preview, setPreviewState] = React.useState<{id: string; start: number; end: number} | null>(null);
@@ -254,6 +390,28 @@ export function Gantt({
     const epics = roadmap.epics ?? [];
     const deadlines = [...(roadmap.deadlines ?? [])].sort((a, b) => a.date.localeCompare(b.date));
     const ungrouped = items.filter((m) => !epics.some((e) => e.id === m.epicId));
+    const canDrag = !readOnly && Boolean(onMoveToEpic) && epics.length > 0;
+    const activeMilestone = items.find((m) => m.id === activeId);
+    const groupKeys = [...epics.map((e) => e.id), ''];
+    const allCollapsed = groupKeys.every((id) => collapsed.has(id));
+    const toggleGroup = (id: string) =>
+        setCollapsed((current) => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(groupKeys));
+    const finishMove = ({active, over}: DragEndEvent) => {
+        setActiveId(null);
+        if (!over) return;
+        const dropId = String(over.id);
+        if (!dropId.startsWith('epic:')) return;
+        const id = String(active.id);
+        const milestone = roadmap.milestones.find((m) => m.id === id);
+        const epicId = dropId.slice(5) || null;
+        if (milestone && (milestone.epicId ?? null) !== epicId) onMoveToEpic?.(id, epicId);
+    };
 
     const down = (e: React.PointerEvent, m: Milestone, mode: 'move' | 'start' | 'end') => {
         if (e.button !== 0) return;
@@ -318,16 +476,13 @@ export function Gantt({
         const outside = short ? (left + w + 6 + textW > width ? {right: width - left + 6} : {left: left + w + 6}) : null;
         return (
             <div key={m.id} className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}>
-                <button
-                    type="button"
-                    className={`mv-gantt__label${epics.length ? ' mv-gantt__label_nested' : ''}`}
-                    onClick={() => onOpen?.(m.id)}
-                    disabled={!onOpen}
-                    title={m.title}
-                >
-                    <span className="mv-gantt__name">{m.title || 'Без названия'}</span>
-                    {meta && <span className="mv-gantt__meta">{meta(m)}</span>}
-                </button>
+                <MilestoneLabel
+                    milestone={m}
+                    nested={epics.length > 0}
+                    draggable={canDrag}
+                    onOpen={onOpen}
+                    meta={meta?.(m)}
+                />
                 <div className="mv-gantt__track" style={{width}}>
                     <div
                         className={`mv-gantt__bar${readOnly ? ' mv-gantt__bar_ro' : ''}${
@@ -387,29 +542,107 @@ export function Gantt({
 
     const renderEpic = (epic?: Epic) => {
         const group = epic ? items.filter((m) => m.epicId === epic.id) : ungrouped;
+        const id = epic?.id ?? '';
+        const isCollapsed = collapsed.has(id);
+        const name = epic?.title || 'Без эпика';
         return (
-            <div className="mv-gantt__row mv-gantt__row_epic">
-                <button
-                    type="button"
-                    className="mv-gantt__label mv-gantt__label_epic"
-                    onClick={() => epic && onOpenEpic?.(epic.id)}
-                    disabled={!epic || !onOpenEpic}
-                    title={epic?.title}
-                >
-                    <span className="mv-gantt__epic-name">
-                        <Icon data={Layers} size={14} />
-                        {epic?.title || 'Без эпика'}
-                    </span>
-                    <span className="mv-gantt__meta">{milestonesWord(group.length)}</span>
-                </button>
-                <div className="mv-gantt__track" style={{width}} />
-            </div>
+            <EpicDropRow epicId={epic?.id ?? null} disabled={!canDrag}>
+                <div className="mv-gantt__label mv-gantt__label_epic">
+                    <button
+                        type="button"
+                        className="mv-gantt__collapse"
+                        onClick={() => toggleGroup(id)}
+                        aria-expanded={!isCollapsed}
+                        aria-label={`${isCollapsed ? 'Развернуть' : 'Свернуть'} эпик «${name}»`}
+                        title={isCollapsed ? 'Развернуть вехи' : 'Свернуть вехи'}
+                        data-collapse-epic={id}
+                    >
+                        <Icon data={isCollapsed ? ChevronRight : ChevronDown} size={16} />
+                    </button>
+                    <button
+                        type="button"
+                        className="mv-gantt__epic-open"
+                        onClick={() => epic && onOpenEpic?.(epic.id)}
+                        disabled={!epic || !onOpenEpic}
+                        title={epic ? name : 'Вехи без эпика'}
+                    >
+                        <span className="mv-gantt__epic-name">
+                            <Icon data={Layers} size={14} />
+                            {name}
+                        </span>
+                        <span className="mv-gantt__meta">{milestonesWord(group.length)}</span>
+                    </button>
+                </div>
+                <div className="mv-gantt__track" style={{width}}>
+                    {isCollapsed &&
+                        group.map((m) => {
+                            const a = Math.min(Math.max(toDay(m.start), rs), re);
+                            const b = Math.max(Math.min(toDay(m.end), re), a);
+                            return (
+                                <span
+                                    key={m.id}
+                                    className={`mv-gantt__epic-bar${m.status ? ` mv-gantt__bar_${m.status}` : ''}`}
+                                    style={{...barColor(m), left: x(a), width: Math.max(3, (b - a + 1) * px)}}
+                                    aria-hidden="true"
+                                />
+                            );
+                        })}
+                </div>
+            </EpicDropRow>
         );
     };
 
     return (
-        <div className="mv-gantt" ref={scroller}>
-            <div className="mv-gantt__inner" style={{width: `calc(var(--mv-gantt-label) + ${width}px)`}}>
+        <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={({active}) => setActiveId(String(active.id))}
+            onDragEnd={finishMove}
+            onDragCancel={() => setActiveId(null)}
+            accessibility={{
+                screenReaderInstructions: {
+                    draggable:
+                        'Пробел, чтобы взять веху, стрелки, чтобы выбрать эпик, пробел, чтобы отпустить. Escape отменяет перенос.',
+                },
+            }}
+        >
+            <div className="mv-gantt-shell">
+                <div className="mv-gantt__toolbar">
+                    <div>
+                        {epics.length > 0 && (
+                            <Button view="flat-secondary" size="s" onClick={toggleAll}>
+                                {allCollapsed ? 'Развернуть все' : 'Свернуть все'}
+                            </Button>
+                        )}
+                    </div>
+                    <div className="mv-gantt__zoom">
+                        <Icon data={MagnifierMinus} size={15} />
+                        <Slider
+                            className="mv-gantt__zoom-slider"
+                            min={MIN_ZOOM}
+                            max={MAX_ZOOM}
+                            step={10}
+                            value={zoom}
+                            onUpdate={changeZoom}
+                            tooltipDisplay="auto"
+                            tooltipFormat={(value) => `${value}%`}
+                            aria-label="Масштаб дорожной карты"
+                        />
+                        <Icon data={MagnifierPlus} size={16} />
+                        <button
+                            type="button"
+                            className="mv-gantt__zoom-value"
+                            onClick={() => changeZoom(100)}
+                            disabled={zoom === 100}
+                            title="Вернуть масштаб 100%"
+                            aria-label={`Масштаб ${zoom}%. Нажмите, чтобы вернуть 100%`}
+                        >
+                            {zoom}%
+                        </button>
+                    </div>
+                </div>
+                <div className="mv-gantt" ref={scroller}>
+                    <div className="mv-gantt__inner" style={{width: `calc(var(--mv-gantt-label) + ${width}px)`}}>
                 <div className="mv-gantt__head">
                     <div className="mv-gantt__label mv-gantt__label_head">
                         <Text variant="caption-2" color="secondary">
@@ -503,15 +736,12 @@ export function Gantt({
                             {epics.map((epic) => (
                                 <React.Fragment key={epic.id}>
                                     {renderEpic(epic)}
-                                    {items.filter((m) => m.epicId === epic.id).map(renderMilestone)}
+                                    {!collapsed.has(epic.id) &&
+                                        items.filter((m) => m.epicId === epic.id).map(renderMilestone)}
                                 </React.Fragment>
                             ))}
-                            {ungrouped.length > 0 && (
-                                <>
-                                    {renderEpic()}
-                                    {ungrouped.map(renderMilestone)}
-                                </>
-                            )}
+                            {renderEpic()}
+                            {!collapsed.has('') && ungrouped.map(renderMilestone)}
                         </>
                     ) : (
                         items.map(renderMilestone)
@@ -527,8 +757,18 @@ export function Gantt({
                         </div>
                     )}
                 </div>
+                    </div>
+                </div>
             </div>
-        </div>
+            <DragOverlay>
+                {activeMilestone && (
+                    <div className="mv-gantt__drag-overlay">
+                        <Icon data={Grip} size={15} />
+                        <span>{activeMilestone.title || 'Без названия'}</span>
+                    </div>
+                )}
+            </DragOverlay>
+        </DndContext>
     );
 }
 
@@ -819,6 +1059,20 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.onSave({...map, milestones: [...map.milestones, m]});
         p.onOpenMilestone(m.id);
     };
+    const moveMilestone = (id: string, epicId: string | null) => {
+        const milestone = mapRef.current.milestones.find((m) => m.id === id);
+        if (!milestone || (milestone.epicId ?? null) === epicId) return;
+        const previous = milestone.epicId ?? null;
+        auto.save({
+            milestones: mapRef.current.milestones.map((m) => (m.id === id ? {...m, epicId} : m)),
+        });
+        const target = (mapRef.current.epics ?? []).find((e) => e.id === epicId)?.title || 'Без эпика';
+        p.undoable(`Веха «${milestone.title}» перенесена в «${target}»`, () =>
+            auto.save({
+                milestones: mapRef.current.milestones.map((m) => (m.id === id ? {...m, epicId: previous} : m)),
+            }),
+        );
+    };
     const removeMilestone = (m: Milestone) => {
         p.onOpenMilestone(null);
         p.onSave({...map, milestones: map.milestones.filter((x) => x.id !== m.id)});
@@ -916,7 +1170,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 </div>
             </div>
             <Text variant="caption-2" color="secondary" className="mv-map__hint">
-                Тяните полосу, чтобы сдвинуть веху, или её край, чтобы изменить срок.
+                Тяните полосу или её край, чтобы изменить сроки. За значок <span aria-hidden="true">⋮⋮</span> веху можно
+                перенести в другой эпик.
             </Text>
 
             <Gantt
@@ -924,6 +1179,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 onChange={(m) =>
                     auto.save({milestones: mapRef.current.milestones.map((x) => (x.id === m.id ? m : x))})
                 }
+                onMoveToEpic={p.disabled ? undefined : moveMilestone}
                 onOpen={(id) => p.onOpenMilestone(id)}
                 onAdd={p.disabled ? undefined : addMilestone}
                 onOpenEpic={setEpicId}

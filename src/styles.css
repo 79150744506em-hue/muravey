@@ -2271,6 +2271,162 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     background: none;
     cursor: pointer;
 }
+.mv-gantt-shell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--g-spacing-2);
+    min-width: 0;
+}
+.mv-gantt__toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--g-spacing-3);
+    min-height: 28px;
+}
+.mv-gantt__zoom {
+    display: flex;
+    align-items: center;
+    gap: var(--g-spacing-2);
+    width: min(240px, 100%);
+    color: var(--g-color-text-secondary);
+}
+.mv-gantt__zoom-slider {
+    flex: 1;
+    min-width: 70px;
+}
+.mv-gantt__zoom-value {
+    flex: 0 0 44px;
+    padding: 3px 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--g-color-text-secondary);
+    font: inherit;
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    text-align: right;
+    cursor: pointer;
+}
+.mv-gantt__zoom-value:not(:disabled):hover {
+    background: var(--g-color-base-simple-hover);
+    color: var(--g-color-text-primary);
+}
+.mv-gantt__zoom-value:disabled {
+    cursor: default;
+}
+.mv-gantt__label_milestone {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding-inline-end: 6px;
+}
+.mv-gantt__open,
+.mv-gantt__epic-open {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+}
+.mv-gantt__open:not(:disabled),
+.mv-gantt__epic-open:not(:disabled) {
+    cursor: pointer;
+}
+.mv-gantt__open:disabled,
+.mv-gantt__epic-open:disabled {
+    opacity: 1;
+}
+.mv-gantt__open:not(:disabled):hover .mv-gantt__name,
+.mv-gantt__epic-open:not(:disabled):hover .mv-gantt__epic-name {
+    color: var(--g-color-text-link-hover, var(--g-color-text-link));
+}
+.mv-gantt__drag-handle,
+.mv-gantt__collapse {
+    display: grid;
+    place-items: center;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--g-color-text-secondary);
+    cursor: pointer;
+}
+.mv-gantt__drag-handle {
+    cursor: grab;
+    touch-action: none;
+    opacity: 0.45;
+}
+.mv-gantt__drag-handle:hover,
+.mv-gantt__drag-handle:focus-visible,
+.mv-gantt__collapse:hover,
+.mv-gantt__collapse:focus-visible {
+    background: var(--g-color-base-simple-hover);
+    color: var(--g-color-text-primary);
+    opacity: 1;
+}
+.mv-gantt__drag-handle:active {
+    cursor: grabbing;
+}
+.mv-gantt__label_dragging {
+    opacity: 0.35;
+}
+.mv-gantt__label_epic {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding-inline: 6px 12px;
+}
+.mv-gantt__epic-open {
+    gap: 1px;
+}
+.mv-gantt__row_drop,
+.mv-gantt__row_epic.mv-gantt__row_drop:hover {
+    background: var(--g-color-base-info-light, rgba(54, 151, 241, 0.12));
+    box-shadow: inset 0 0 0 2px var(--g-color-line-info, #3697f1);
+}
+.mv-gantt__row_drop > .mv-gantt__label,
+.mv-gantt__row_epic.mv-gantt__row_drop:hover > .mv-gantt__label {
+    background: var(--g-color-base-info-light, rgba(54, 151, 241, 0.12));
+}
+.mv-gantt__epic-bar {
+    position: absolute;
+    top: 50%;
+    height: 8px;
+    margin-top: -4px;
+    border-radius: 4px;
+    background: var(--mv-gantt-bar-line, var(--g-color-line-info, #3697f1));
+    opacity: 0.7;
+    pointer-events: none;
+}
+.mv-gantt__drag-overlay {
+    display: flex;
+    align-items: center;
+    gap: var(--g-spacing-2);
+    max-width: 280px;
+    padding: 10px 14px;
+    border: 1px solid var(--g-color-line-info, #3697f1);
+    border-radius: 10px;
+    background: var(--g-color-base-float);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    font-weight: 500;
+    cursor: grabbing;
+}
+.mv-gantt__drag-overlay > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 @media (max-width: 640px) {
     .mv-gantt {
         --mv-gantt-label: 140px;
