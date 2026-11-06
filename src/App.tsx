@@ -19,12 +19,14 @@ import {
     TextInput,
 } from '@gravity-ui/uikit';
 import {
+    ArrowRight,
     ArrowUturnCcwLeft,
     BarsUnaligned,
     CircleCheck,
     Flag,
     Link,
     LinkSlash,
+    Lock,
     Person,
     Persons,
     Grip,
@@ -346,9 +348,24 @@ export function App() {
     const removeTask = (id: string) => {
         if (!backend) return;
         const t = tasksRef.current.find((x) => x.id === id);
+        const blocked = tasksRef.current.filter((x) => x.blockedBy?.includes(id)).map((x) => x.id);
+        for (const x of tasksRef.current) {
+            if (x.blockedBy?.includes(id)) {
+                run(backend.saveTask({...x, blockedBy: x.blockedBy.filter((blockerId) => blockerId !== id)}));
+            }
+        }
         if (openId === id) setOpenId(null);
         run(backend.removeTask(id));
-        if (t) undoable(`Задача «${t.title}» удалена`, () => run(backend.saveTask(t)));
+        if (t) {
+            undoable(`Задача «${t.title}» удалена`, () => {
+                run(backend.saveTask(t));
+                for (const x of tasksRef.current) {
+                    if (blocked.includes(x.id) && !x.blockedBy?.includes(id)) {
+                        run(backend.saveTask({...x, blockedBy: [...(x.blockedBy ?? []), id]}));
+                    }
+                }
+            });
+        }
     };
 
     const removeTag = (tagId: string) => {
@@ -472,6 +489,24 @@ export function App() {
         return p && p.list === 'focus' && t.list !== 'focus' ? p : undefined;
     };
     const childrenOf = (id: string) => all.filter((t) => t.parentId === id && t.list !== 'focus');
+    const blockersOf = (t: Task) =>
+        (t.blockedBy ?? []).map((id) => byId.get(id)).filter((x): x is Task => Boolean(x));
+    const blocksOf = (t: Task) => all.filter((x) => x.blockedBy?.includes(t.id));
+    const blockerCandidatesFor = (t: Task) => {
+        const downstream = new Set<string>();
+        const walk = (id: string) => {
+            for (const x of all) {
+                if (x.blockedBy?.includes(id) && !downstream.has(x.id)) {
+                    downstream.add(x.id);
+                    walk(x.id);
+                }
+            }
+        };
+        walk(t.id);
+        return all.filter(
+            (x) => !x.done && x.id !== t.id && !t.blockedBy?.includes(x.id) && !downstream.has(x.id),
+        );
+    };
     const progressOf = (t: Task) => {
         if (t.list !== 'focus') return undefined;
         const kids = childrenOf(t.id);
@@ -531,6 +566,9 @@ export function App() {
             parent={parentOf(t)}
             progress={progressOf(t)}
             onOpenParent={(id) => setOpenId(id)}
+            blockers={blockersOf(t).filter((x) => !x.done)}
+            blocks={blocksOf(t).filter((x) => !x.done)}
+            onOpenDependency={(id) => setOpenId(id)}
             hungry={hungerOf(t, all)}
             today={today}
             person={findPerson(peopleMaps ?? [], t.stakeholderId)}
@@ -816,6 +854,9 @@ export function App() {
                             closeCard();
                         }}
                         onCreateTag={createTag}
+                        blockers={blockersOf(cardTask)}
+                        blocks={blocksOf(cardTask)}
+                        blockerCandidates={blockerCandidatesFor(cardTask)}
                         focusTasks={focusTasks}
                         parent={parentOf(cardTask)}
                         subtasks={childrenOf(cardTask.id)}
@@ -1423,6 +1464,38 @@ function MonkeyFeast({onEnd}: {onEnd: () => void}) {
     );
 }
 
+function DependencyChip({
+    kind,
+    tasks,
+    onOpen,
+}: {
+    kind: 'blocked' | 'blocking';
+    tasks: Task[];
+    onOpen: (id: string) => void;
+}) {
+    const names = tasks.map((t) => `«${t.title}»`).join(', ');
+    const title = kind === 'blocked' ? `Сначала закройте: ${names}` : `Эта задача блокирует: ${names}`;
+    return (
+        <button
+            type="button"
+            className={`mv-parent-chip mv-dependency-chip mv-dependency-chip_${kind}`}
+            title={title}
+            aria-label={title}
+            onClick={(e) => {
+                e.stopPropagation();
+                onOpen(tasks[0].id);
+            }}
+        >
+            <Icon data={kind === 'blocked' ? Lock : ArrowRight} size={12} />
+            <span>
+                {kind === 'blocked' ? 'Блокируется: ' : 'Блокирует: '}
+                {tasks[0].title}
+                {tasks.length > 1 ? ` +${tasks.length - 1}` : ''}
+            </span>
+        </button>
+    );
+}
+
 function TaskRow({
     task,
     list,
@@ -1433,6 +1506,9 @@ function TaskRow({
     parent,
     progress,
     onOpenParent,
+    blockers,
+    blocks,
+    onOpenDependency,
     hungry = null,
     today,
     person,
@@ -1450,6 +1526,9 @@ function TaskRow({
     /** у фокусной задачи: сколько подзадач закрыто */
     progress?: {done: number; total: number};
     onOpenParent?: (id: string) => void;
+    blockers: Task[];
+    blocks: Task[];
+    onOpenDependency: (id: string) => void;
     /** сколько дней голодна обезьяна (null — сыта) */
     hungry?: number | null;
     today: string;
@@ -1523,6 +1602,12 @@ function TaskRow({
                             <Icon data={Target} size={12} />
                             <span>{parent.title}</span>
                         </button>
+                    )}
+                    {!task.done && blockers.length > 0 && (
+                        <DependencyChip kind="blocked" tasks={blockers} onOpen={onOpenDependency} />
+                    )}
+                    {!task.done && blocks.length > 0 && (
+                        <DependencyChip kind="blocking" tasks={blocks} onOpen={onOpenDependency} />
                     )}
                     {task.dueDate && !task.done && <DueChip day={task.dueDate} today={today} />}
                     {person && (
@@ -1603,6 +1688,9 @@ function TaskDetails({
     onPatch,
     onClose,
     onCreateTag,
+    blockers,
+    blocks,
+    blockerCandidates,
     focusTasks,
     parent,
     subtasks,
@@ -1633,6 +1721,9 @@ function TaskDetails({
     onClose: () => void;
     onCreateTag: (name: string) => Tag;
     onComplete: () => void;
+    blockers: Task[];
+    blocks: Task[];
+    blockerCandidates: Task[];
     /** открытые фокусные задачи — к ним можно привязать эту */
     focusTasks: Task[];
     parent?: Task;
@@ -1728,6 +1819,11 @@ function TaskDetails({
                               : 'Новая задача в бэклог'
                         : where}
                 </Label>
+                {!task.done && blockers.some((x) => !x.done) && (
+                    <Label theme="warning" size="s" icon={<Icon data={Lock} size={12} />}>
+                        Заблокирована
+                    </Label>
+                )}
                 <SaveStatus
                     state={saveState}
                     idle={
@@ -1871,6 +1967,91 @@ function TaskDetails({
                     placeholder="Подробности, ссылки, критерии готовности"
                 />
             </section>
+
+            {(!task.done || blockers.length > 0 || blocks.length > 0) && (
+                <section className="mv-field mv-dependencies">
+                    <Text variant="subheader-1">Блокировки</Text>
+                    {blockers.length === 0 && blocks.length === 0 && (
+                        <Text variant="caption-2" color="secondary">
+                            Укажите задачи, которые нужно завершить перед этой.
+                        </Text>
+                    )}
+                    {blockers.length > 0 && (
+                        <div className="mv-dependency-group">
+                            <Text variant="caption-2" color="secondary">
+                                Ждёт выполнения
+                            </Text>
+                            <ul className="mv-subtasks">
+                                {blockers.map((b) => (
+                                    <li key={b.id} className={`mv-subtask${b.done ? ' mv-subtask_done' : ''}`}>
+                                        <span className="mv-blocker__icon" aria-hidden="true">
+                                            <Icon data={b.done ? CircleCheck : Lock} size={14} />
+                                        </span>
+                                        <button
+                                            type="button"
+                                            className="mv-subtask__title"
+                                            onClick={() => onOpenTask(b.id)}
+                                        >
+                                            {b.title}
+                                        </button>
+                                        {b.done && <span className="mv-dependency__done">Выполнена</span>}
+                                        {!task.done && (
+                                            <ActionTooltip title="Снять блокировку">
+                                                <Button
+                                                    view="flat-secondary"
+                                                    size="s"
+                                                    className="mv-subtask__unlink"
+                                                    onClick={() =>
+                                                        save({
+                                                            blockedBy: (task.blockedBy ?? []).filter((id) => id !== b.id),
+                                                        })
+                                                    }
+                                                    aria-label={`Снять блокировку «${b.title}»`}
+                                                >
+                                                    <Icon data={LinkSlash} size={14} />
+                                                </Button>
+                                            </ActionTooltip>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                    {!task.done && blockerCandidates.length > 0 && (
+                        <TaskPicker
+                            id="mv-task-blocker"
+                            label="Добавить блокирующую задачу"
+                            icon={Lock}
+                            tasks={blockerCandidates}
+                            onPick={(id) => save({blockedBy: [...(task.blockedBy ?? []), id]})}
+                        />
+                    )}
+                    {blocks.length > 0 && (
+                        <div className="mv-dependency-group">
+                            <Text variant="caption-2" color="secondary">
+                                Эта задача блокирует
+                            </Text>
+                            <ul className="mv-subtasks">
+                                {blocks.map((b) => (
+                                    <li key={b.id} className={`mv-subtask${b.done ? ' mv-subtask_done' : ''}`}>
+                                        <span className="mv-blocker__icon" aria-hidden="true">
+                                            <Icon data={ArrowRight} size={14} />
+                                        </span>
+                                        <button
+                                            type="button"
+                                            className="mv-subtask__title"
+                                            onClick={() => onOpenTask(b.id)}
+                                        >
+                                            {b.title}
+                                        </button>
+                                        {b.done && <span className="mv-dependency__done">Выполнена</span>}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </section>
+            )}
 
             {(people.length > 0 || person) && (
                 <section className="mv-field">

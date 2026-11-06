@@ -22,6 +22,7 @@ export interface Task {
     createdAt: string;
     order?: number | null; // ручная сортировка внутри списка
     parentId?: string | null; // фокусная задача, для которой эта — подзадача
+    blockedBy?: string[]; // задачи, которые нужно закрыть перед этой
     touchedAt?: string | null; // последнее действие с задачей — им кормится обезьяна
     milestoneId?: string | null; // веха дорожной карты, к которой привязана задача
     stakeholderId?: string | null; // стейкхолдер, с которым связана задача

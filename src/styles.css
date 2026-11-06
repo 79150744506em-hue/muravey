@@ -1282,6 +1282,29 @@ body {
     outline: 2px solid var(--g-color-line-focus);
     outline-offset: 1px;
 }
+.mv-dependency-chip {
+    max-width: min(320px, 100%);
+}
+.mv-dependency-chip_blocked {
+    background: var(--g-color-base-danger-light);
+    color: var(--g-color-text-danger);
+}
+.mv-dependency-chip_blocking {
+    background: var(--g-color-base-warning-light);
+    color: var(--g-color-text-warning-heavy);
+}
+.mv-dependency-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--g-spacing-2);
+    margin-top: var(--g-spacing-1);
+}
+.mv-dependency__done {
+    flex-shrink: 0;
+    color: var(--g-color-text-secondary);
+    font-size: var(--g-text-caption-2-font-size, 12px);
+    white-space: nowrap;
+}
 
 /* полоска прогресса */
 .mv-bar {
