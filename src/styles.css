@@ -2480,19 +2480,9 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     flex-direction: column;
     gap: 4px;
 }
-.mv-date-field input {
-    height: 32px;
-    padding-inline: 8px;
-    border: 1px solid var(--g-color-line-generic);
-    border-radius: var(--g-border-radius-m, 8px);
-    background: var(--g-color-base-background);
-    color: var(--g-color-text-primary);
-    font: inherit;
-    color-scheme: light dark;
-}
-.mv-date-field input:focus {
-    outline: none;
-    border-color: var(--g-color-line-generic-active);
+.mv-date-field__picker {
+    display: inline-flex;
+    max-width: 100%;
 }
 .mv-parent-card_milestone {
     background: var(--g-color-base-info-light, rgba(54, 151, 241, 0.12));
@@ -2572,16 +2562,291 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     align-items: center;
     gap: var(--g-spacing-2) var(--g-spacing-3);
 }
-.mv-due-field__input,
-.mv-sh-quick__date {
-    height: 32px;
-    padding: 0 10px;
+/* ---------- выбор задачи ---------- */
+.mv-task-picker__popup {
+    --g-color-base-float: var(--mv-surface);
+    max-width: calc(100vw - 24px);
+    border-radius: 14px;
+    box-shadow: 0 14px 40px rgba(65, 48, 35, 0.14);
+}
+.mv-task-picker__popup .g-select-filter {
+    padding: 8px 8px 6px !important;
+    border-bottom: 1px solid var(--mv-divider);
+}
+.mv-task-picker__popup .g-select-list {
+    gap: 4px;
+    max-height: min(440px, 65dvh);
+    margin: 0;
+    padding: 6px;
+}
+.mv-task-picker__popup .g-list__items {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.mv-task-picker__popup .g-list__item {
+    height: auto !important;
+    min-height: 0;
+    overflow: visible;
+    border-radius: 10px;
+}
+.mv-task-picker__popup .g-list__item-content {
+    height: auto;
+    min-width: 0;
+}
+.mv-task-picker__popup .g-select-list__option {
+    height: auto;
+    padding: 0;
+}
+.mv-task-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+}
+.mv-task-option__icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: var(--g-color-base-generic);
+    color: var(--g-color-text-secondary);
+}
+.mv-task-option__icon_today {
+    background: var(--g-color-base-info-light);
+    color: var(--g-color-text-info);
+}
+.mv-task-option__icon_focus {
+    background: var(--g-color-base-utility-light);
+    color: var(--g-color-text-utility);
+}
+.mv-task-option__icon_done {
+    background: var(--g-color-base-positive-light);
+    color: var(--g-color-text-positive);
+}
+.mv-task-option__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.mv-task-option__title {
+    color: var(--g-color-text-primary);
+    font-size: var(--g-text-body-1-font-size);
+    font-weight: 550;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.mv-task-option_done .mv-task-option__title {
+    color: var(--g-color-text-secondary);
+    text-decoration: line-through;
+}
+.mv-task-option__meta,
+.mv-task-option__due,
+.mv-task-option__tags {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+.mv-task-option__meta {
+    color: var(--g-color-text-secondary);
+    font-size: var(--g-text-caption-2-font-size);
+    line-height: 1.3;
+}
+.mv-task-option__due {
+    gap: 4px;
+}
+.mv-task-option__tags {
+    gap: 4px;
+    margin-top: 2px;
+}
+.mv-task-option__add {
+    flex-shrink: 0;
+    align-self: center;
+    color: var(--mv-accent);
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+.mv-task-picker__popup .g-list__item_active .mv-task-option__add,
+.mv-task-option:hover .mv-task-option__add {
+    opacity: 1;
+}
+.mv-task-picker__empty {
+    display: block;
+    padding: 20px 14px;
+    text-align: center;
+}
+
+/* ---------- поле даты и календарь ---------- */
+.mv-date-field__control {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 184px;
+    min-height: 36px;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 7px 10px;
     border: 1px solid var(--g-color-line-generic);
-    border-radius: var(--g-border-radius-m, 6px);
-    background: var(--g-color-base-background);
+    border-radius: 10px;
+    background: var(--mv-surface);
+    color: var(--g-color-text-hint);
+    font: inherit;
+    font-size: var(--g-text-body-1-font-size);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.mv-date-field__control > span {
+    flex: 1;
+    min-width: 0;
+}
+.mv-date-field__control_filled {
+    color: var(--g-color-text-primary);
+}
+.mv-date-field__control:hover:not(:disabled) {
+    border-color: var(--g-color-line-generic-hover);
+    background: var(--g-color-base-simple-hover);
+}
+.mv-date-field__control:focus-visible,
+.mv-date-field__control[aria-expanded='true'] {
+    outline: none;
+    border-color: var(--mv-accent);
+    box-shadow: 0 0 0 3px var(--g-color-base-selection);
+}
+.mv-date-field__control:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+.mv-date-field__calendar {
+    flex-shrink: 0;
+    color: var(--mv-accent);
+}
+.mv-date-field__chevron {
+    flex-shrink: 0;
+    color: var(--g-color-text-hint);
+}
+.mv-date-picker {
+    width: 296px;
+    max-width: calc(100vw - 40px);
+    box-sizing: border-box;
+    padding: 14px;
+    border: 1px solid var(--mv-divider);
+    border-radius: 14px;
+    background: var(--g-color-base-float);
+    box-shadow: 0 14px 40px rgba(65, 48, 35, 0.14);
+}
+.mv-date-picker__head {
+    display: grid;
+    grid-template-columns: 28px 1fr 28px;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+.mv-date-picker__month {
+    color: var(--g-color-text-primary);
+    font-size: var(--g-text-body-2-font-size);
+    font-weight: 600;
+    text-align: center;
+    text-transform: capitalize;
+}
+.mv-date-picker__weekdays,
+.mv-date-picker__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+}
+.mv-date-picker__weekdays {
+    margin-bottom: 5px;
+    color: var(--g-color-text-hint);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-align: center;
+    text-transform: uppercase;
+}
+.mv-date-picker__weekdays span {
+    padding-block: 4px;
+}
+.mv-date-picker__day {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
     color: var(--g-color-text-primary);
     font: inherit;
-    color-scheme: light dark;
+    font-size: var(--g-text-body-1-font-size);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.mv-date-picker__day:hover:not(:disabled) {
+    background: var(--g-color-base-selection-hover);
+}
+.mv-date-picker__day:focus-visible {
+    outline: 2px solid var(--mv-accent);
+    outline-offset: 1px;
+}
+.mv-date-picker__day_outside {
+    color: var(--g-color-text-hint);
+    opacity: 0.55;
+}
+.mv-date-picker__day_today:not(.mv-date-picker__day_selected) {
+    color: var(--mv-accent);
+    font-weight: 700;
+    box-shadow: inset 0 0 0 1px var(--mv-accent);
+}
+.mv-date-picker__day_selected,
+.mv-date-picker__day_selected:hover:not(:disabled) {
+    background: var(--mv-accent);
+    color: var(--g-color-text-brand-contrast);
+    font-weight: 600;
+    box-shadow: 0 3px 8px var(--g-color-base-selection-hover);
+}
+.mv-date-picker__day:disabled {
+    opacity: 0.22;
+    cursor: default;
+}
+.mv-date-picker__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 28px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--mv-divider);
+}
+.mv-date-picker__foot > span {
+    color: var(--g-color-text-secondary);
+    font-size: 11px;
+    text-align: right;
+}
+.mv-sh-quick__date .mv-date-field__control {
+    min-height: 32px;
+    padding-block: 5px;
+}
+@media (max-width: 420px) {
+    .mv-date-picker {
+        padding: 10px;
+    }
+    .mv-date-picker__day {
+        width: 32px;
+        height: 32px;
+    }
+    .mv-task-option__add {
+        opacity: 0.65;
+    }
 }
 .mv-parent-chip_person,
 .mv-parent-card_person {

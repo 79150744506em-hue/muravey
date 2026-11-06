@@ -48,6 +48,8 @@ import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
 import type {ListKind, Milestone, Roadmap, Stakeholder, StakeholderMap, Tag, TagTheme, Task} from './types';
 import {AddListItem} from './AddListItem';
+import {DateField} from './DateField';
+import {TaskPicker} from './TaskPicker';
 import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
@@ -689,6 +691,7 @@ export function App() {
                     <RoadmapsView
                         roadmaps={roadmaps}
                         tasks={all}
+                        tags={sortedTags}
                         mapId={mapId}
                         onOpenMap={(id) => switchView('roadmap', id)}
                         milestoneId={milestoneId}
@@ -717,6 +720,7 @@ export function App() {
                     <StakeholdersView
                         maps={peopleMaps}
                         tasks={all}
+                        tags={sortedTags}
                         today={today}
                         mapId={mapId}
                         onOpenMap={(id) => switchView('stakeholders', id)}
@@ -1396,39 +1400,6 @@ function ProgressBar({done, total, wide}: {done: number; total: number; wide?: b
     );
 }
 
-/** Кнопка, открывающая список задач для выбора. */
-function TaskPicker({
-    id,
-    label,
-    icon,
-    tasks,
-    onPick,
-}: {
-    id: string;
-    label: string;
-    icon: typeof Link;
-    tasks: Task[];
-    onPick: (id: string) => void;
-}) {
-    return (
-        <Select
-            id={id}
-            value={[]}
-            filterable={tasks.length > 7}
-            filterPlaceholder="Найти задачу"
-            popupWidth={320}
-            onUpdate={([v]) => v && onPick(v)}
-            options={tasks.map((t) => ({value: t.id, content: t.title}))}
-            renderControl={({ref, triggerProps}) => (
-                <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
-                    <Icon data={icon} size={16} />
-                    {label}
-                </Button>
-            )}
-        />
-    );
-}
-
 function daysWord(n: number) {
     const a = n % 10;
     const b = n % 100;
@@ -1926,12 +1897,12 @@ function TaskDetails({
                     <section className="mv-field">
                         <Text variant="subheader-1">Дата</Text>
                         <div className="mv-due-field">
-                            <input
-                                type="date"
+                            <DateField
                                 className="mv-due-field__input"
                                 value={task.dueDate ?? ''}
-                                onChange={(e) => save({dueDate: e.target.value || null})}
-                                aria-label="Дата задачи"
+                                onChange={(day) => save({dueDate: day})}
+                                ariaLabel="Дата задачи"
+                                placeholder="Без даты"
                             />
                             {task.dueDate ? (
                                 <>
@@ -2023,6 +1994,7 @@ function TaskDetails({
                             label="Добавить блокирующую задачу"
                             icon={Lock}
                             tasks={blockerCandidates}
+                            tags={tags}
                             onPick={(id) => save({blockedBy: [...(task.blockedBy ?? []), id]})}
                         />
                     )}
@@ -2137,6 +2109,7 @@ function TaskDetails({
                             label="Привязать к фокусной задаче"
                             icon={Target}
                             tasks={focusTasks}
+                            tags={tags}
                             onPick={(id) => save({parentId: id})}
                         />
                     )}
@@ -2272,7 +2245,8 @@ function TaskDetails({
                                 label="Привязать"
                                 icon={Link}
                                 tasks={linkable}
-                                onPick={(id) => onLinkChild(id, task.id)}
+                                tags={tags}
+                            onPick={(id) => onLinkChild(id, task.id)}
                             />
                         )}
                     </div>

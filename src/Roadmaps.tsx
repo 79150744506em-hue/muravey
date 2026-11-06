@@ -53,7 +53,9 @@ import {
 } from '@gravity-ui/icons';
 
 import {AddListItem} from './AddListItem';
-import type {Deadline, Epic, Milestone, Roadmap, RoadmapScale, Task} from './types';
+import {DateField} from './DateField';
+import {TaskPicker} from './TaskPicker';
+import type {Deadline, Epic, Milestone, Roadmap, RoadmapScale, Tag, Task} from './types';
 import {dayKey, uid} from './types';
 import {loadSharedRoadmap} from './store';
 import {DescriptionEditor} from './DescriptionEditor';
@@ -907,6 +909,7 @@ function SettingsDialog({
 export type RoadmapsProps = {
     roadmaps: Roadmap[] | null;
     tasks: Task[];
+    tags: Tag[];
     mapId: string | null;
     onOpenMap: (id: string | null) => void;
     milestoneId: string | null;
@@ -1226,6 +1229,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         epics={map.epics ?? []}
                         scale={map}
                         tasks={linked(milestone.id)}
+                        tags={p.tags}
                         linkable={p.tasks.filter((t) => !t.done && t.milestoneId !== milestone.id)}
                         onSave={(patch) => patchMilestone(milestone.id, patch)}
                         onSaveAll={(list) => saveMap({milestones: list})}
@@ -1440,18 +1444,18 @@ function DeadlineDetails({
             />
             <section className="mv-field">
                 <Text variant="subheader-1">Дата</Text>
-                <label className="mv-date-field">
+                <div className="mv-date-field">
                     <Text variant="caption-2" color="secondary">
                         Контрольный день
                     </Text>
-                    <input
-                        type="date"
+                    <DateField
                         value={deadline.date}
                         min={fromDay(monthStart(scale.from))}
                         max={fromDay(monthEnd(scale.to))}
-                        onChange={(e) => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && auto.save({date: e.target.value})}
+                        onChange={(day) => auto.save({date: day})}
+                        ariaLabel="Дата дедлайна"
                     />
-                </label>
+                </div>
             </section>
         </div>
     );
@@ -1501,6 +1505,7 @@ function MilestoneDetails({
     epics,
     scale,
     tasks,
+    tags,
     linkable,
     onSave,
     onSaveAll,
@@ -1516,6 +1521,7 @@ function MilestoneDetails({
     epics: Epic[];
     scale: Pick<Roadmap, 'from' | 'to'>;
     tasks: Task[];
+    tags: Tag[];
     linkable: Task[];
     /** правка этой вехи; берёт свежую версию вехи и накладывает изменения */
     onSave: (p: Partial<Milestone>) => Promise<void> | null;
@@ -1606,30 +1612,30 @@ function MilestoneDetails({
             <section className="mv-field">
                 <Text variant="subheader-1">Сроки</Text>
                 <div className="mv-dates">
-                    <label className="mv-date-field">
+                    <div className="mv-date-field">
                         <Text variant="caption-2" color="secondary">
                             Начало
                         </Text>
-                        <input
-                            type="date"
+                        <DateField
                             value={milestone.start}
                             min={fromDay(lo)}
                             max={fromDay(re)}
-                            onChange={(e) => setDate('start', e.target.value)}
+                            onChange={(day) => setDate('start', day)}
+                            ariaLabel="Дата начала вехи"
                         />
-                    </label>
-                    <label className="mv-date-field">
+                    </div>
+                    <div className="mv-date-field">
                         <Text variant="caption-2" color="secondary">
                             Конец
                         </Text>
-                        <input
-                            type="date"
+                        <DateField
                             value={milestone.end}
                             min={fromDay(rs)}
                             max={fromDay(hi)}
-                            onChange={(e) => setDate('end', e.target.value)}
+                            onChange={(day) => setDate('end', day)}
+                            ariaLabel="Дата окончания вехи"
                         />
-                    </label>
+                    </div>
                 </div>
             </section>
 
@@ -1845,19 +1851,12 @@ function MilestoneDetails({
                 )}
                 {linkable.length > 0 && (
                     <div>
-                        <Select
-                            value={[]}
-                            filterable={linkable.length > 7}
-                            filterPlaceholder="Найти задачу"
-                            popupWidth={320}
-                            onUpdate={([v]) => v && onLinkTask(v, milestone.id)}
-                            options={linkable.map((t) => ({value: t.id, content: t.title}))}
-                            renderControl={({ref, triggerProps}) => (
-                                <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
-                                    <Icon data={Plus} size={16} />
-                                    Привязать задачу
-                                </Button>
-                            )}
+                        <TaskPicker
+                            label="Привязать задачу"
+                            icon={Plus}
+                            tasks={linkable}
+                            tags={tags}
+                            onPick={(id) => onLinkTask(id, milestone.id)}
                         />
                     </div>
                 )}

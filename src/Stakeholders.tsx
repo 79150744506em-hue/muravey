@@ -9,7 +9,6 @@ import {
     Label,
     Loader,
     SegmentedRadioGroup,
-    Select,
     Text,
     TextArea,
     TextInput,
@@ -17,7 +16,9 @@ import {
 import {ArrowLeft, Calendar, LinkSlash, Pencil, Persons, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
 
 import {AddListItem} from './AddListItem';
-import type {Attitude, ContactKind, Interaction, Outcome, Stakeholder, StakeholderMap, Task} from './types';
+import {DateField} from './DateField';
+import {TaskPicker} from './TaskPicker';
+import type {Attitude, ContactKind, Interaction, Outcome, Stakeholder, StakeholderMap, Tag, Task} from './types';
 import {addDays, dayKey, openTasksOf, uid} from './types';
 import {DescriptionEditor} from './DescriptionEditor';
 import {SaveStatus, useAutosave} from './SaveStatus';
@@ -104,6 +105,7 @@ export function findPerson(maps: StakeholderMap[], id: string | null | undefined
 export type StakeholdersProps = {
     maps: StakeholderMap[] | null;
     tasks: Task[];
+    tags: Tag[];
     today: string;
     mapId: string | null;
     onOpenMap: (id: string | null) => void;
@@ -417,6 +419,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                         person={person}
                         today={p.today}
                         tasks={p.tasks.filter((t) => t.stakeholderId === person.id)}
+                        tags={p.tags}
                         linkable={p.tasks.filter((t) => !t.done && t.stakeholderId !== person.id)}
                         onSave={(patch) => patchPerson(person.id, patch)}
                         onDelete={() => remove(person)}
@@ -569,6 +572,7 @@ function PersonDetails({
     person,
     today,
     tasks,
+    tags,
     linkable,
     onSave,
     onDelete,
@@ -582,6 +586,7 @@ function PersonDetails({
     person: Stakeholder;
     today: string;
     tasks: Task[];
+    tags: Tag[];
     linkable: Task[];
     onSave: (p: Partial<Stakeholder>) => Promise<void> | null;
     onDelete: () => void;
@@ -746,19 +751,12 @@ function PersonDetails({
                         </Button>
                     )}
                     {linkable.length > 0 && (
-                        <Select
-                            value={[]}
-                            filterable={linkable.length > 7}
-                            filterPlaceholder="Найти задачу"
-                            popupWidth={320}
-                            onUpdate={([v]) => v && onLinkTask(v, person.id)}
-                            options={linkable.map((t) => ({value: t.id, content: t.title}))}
-                            renderControl={({ref, triggerProps}) => (
-                                <Button ref={ref as React.Ref<HTMLButtonElement>} {...triggerProps} view="outlined" size="m">
-                                    <Icon data={Plus} size={16} />
-                                    Привязать задачу
-                                </Button>
-                            )}
+                        <TaskPicker
+                            label="Привязать задачу"
+                            icon={Plus}
+                            tasks={linkable}
+                            tags={tags}
+                            onPick={(id) => onLinkTask(id, person.id)}
                         />
                     )}
                 </div>
@@ -909,12 +907,12 @@ function HistoryForm({today, onAdd}: {today: string; onAdd: (h: Interaction) => 
     };
     return (
         <div className="mv-sh-form">
-            <label className="mv-date-field">
+            <div className="mv-date-field">
                 <Text variant="caption-2" color="secondary">
                     Когда
                 </Text>
-                <input type="date" value={date} max={today} onChange={(e) => e.target.value && setDate(e.target.value)} />
-            </label>
+                <DateField value={date} max={today} onChange={setDate} ariaLabel="Дата взаимодействия" />
+            </div>
             <ContactFields
                 kind={kind}
                 outcome={outcome}
@@ -1055,13 +1053,12 @@ export function ContactDialog({
                                         </button>
                                     );
                                 })}
-                                <input
-                                    type="date"
+                                <DateField
                                     className="mv-sh-quick__date"
                                     value={date}
                                     min={today}
-                                    onChange={(e) => e.target.value && setDate(e.target.value)}
-                                    aria-label="Дата следующего контакта"
+                                    onChange={setDate}
+                                    ariaLabel="Дата следующего контакта"
                                 />
                             </div>
                         </div>
