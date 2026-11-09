@@ -22,6 +22,8 @@ import {
     Icon,
     Label,
     Loader,
+    Menu,
+    Popup,
     SegmentedRadioGroup,
     Select,
     Slider,
@@ -36,6 +38,7 @@ import {
     ChevronRight,
     CircleCheck,
     CircleCheckFill,
+    CopyPlus,
     Flag,
     Gear,
     Globe,
@@ -45,6 +48,7 @@ import {
     Lock,
     MagnifierMinus,
     MagnifierPlus,
+    Pencil,
     Person,
     Plus,
     TrashBin,
@@ -251,6 +255,8 @@ export function Gantt({
     onChange,
     onMoveToEpic,
     onOpen,
+    onRename,
+    onDuplicate,
     onAdd,
     onOpenEpic,
     onAddEpic,
@@ -265,6 +271,8 @@ export function Gantt({
     onChange?: (m: Milestone) => void;
     onMoveToEpic?: (id: string, epicId: string | null) => void;
     onOpen?: (id: string) => void;
+    onRename?: (id: string, title: string) => void;
+    onDuplicate?: (m: Milestone) => void;
     onOpenEpic?: (id: string) => void;
     onAddEpic?: () => void;
     onOpenDeadline?: (id: string) => void;
@@ -277,10 +285,14 @@ export function Gantt({
     const rs = monthStart(roadmap.from);
     const re = monthEnd(roadmap.to);
     const scroller = React.useRef<HTMLDivElement>(null);
+    const contextAnchor = React.useRef<HTMLDivElement>(null);
     const [room, setRoom] = React.useState(0);
     const [zoom, setZoom] = React.useState(initialZoom);
     const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set());
     const [activeId, setActiveId] = React.useState<string | null>(null);
+    const [contextMenu, setContextMenu] = React.useState<{id: string; x: number; y: number} | null>(null);
+    const [renaming, setRenaming] = React.useState(false);
+    const [contextTitle, setContextTitle] = React.useState('');
     const zoomAnchor = React.useRef<number | null>(null);
     const sensors = useSensors(
         useSensor(MouseSensor, {activationConstraint: {distance: 5}}),
@@ -394,6 +406,7 @@ export function Gantt({
     const ungrouped = items.filter((m) => !epics.some((e) => e.id === m.epicId));
     const canDrag = !readOnly && Boolean(onMoveToEpic) && epics.length > 0;
     const activeMilestone = items.find((m) => m.id === activeId);
+    const contextMilestone = items.find((m) => m.id === contextMenu?.id);
     const groupKeys = [...epics.map((e) => e.id), ''];
     const allCollapsed = groupKeys.every((id) => collapsed.has(id));
     const toggleGroup = (id: string) =>
@@ -413,6 +426,24 @@ export function Gantt({
         const milestone = roadmap.milestones.find((m) => m.id === id);
         const epicId = dropId.slice(5) || null;
         if (milestone && (milestone.epicId ?? null) !== epicId) onMoveToEpic?.(id, epicId);
+    };
+    const showContextMenu = (e: React.MouseEvent, m: Milestone) => {
+        if (readOnly || (!onRename && !onDuplicate)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setContextTitle(m.title);
+        setRenaming(false);
+        setContextMenu({id: m.id, x: e.clientX, y: e.clientY});
+    };
+    const closeContextMenu = () => {
+        setContextMenu(null);
+        setRenaming(false);
+    };
+    const renameMilestone = () => {
+        const title = contextTitle.trim();
+        if (!contextMilestone || !title) return;
+        if (title !== contextMilestone.title) onRename?.(contextMilestone.id, title);
+        closeContextMenu();
     };
 
     const down = (e: React.PointerEvent, m: Milestone, mode: 'move' | 'start' | 'end') => {
@@ -477,7 +508,11 @@ export function Gantt({
         const done = progress?.(m) ?? null;
         const outside = short ? (left + w + 6 + textW > width ? {right: width - left + 6} : {left: left + w + 6}) : null;
         return (
-            <div key={m.id} className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}>
+            <div
+                key={m.id}
+                className={`mv-gantt__row${p ? ' mv-gantt__row_drag' : ''}`}
+                onContextMenu={(event) => showContextMenu(event, m)}
+            >
                 <MilestoneLabel
                     milestone={m}
                     nested={epics.length > 0}
@@ -762,6 +797,86 @@ export function Gantt({
                     </div>
                 </div>
             </div>
+            <div
+                ref={contextAnchor}
+                className="mv-gantt__context-anchor"
+                style={{left: contextMenu?.x ?? 0, top: contextMenu?.y ?? 0}}
+                aria-hidden="true"
+            />
+            <Popup
+                open={Boolean(contextMilestone)}
+                anchorRef={contextAnchor}
+                strategy="fixed"
+                placement="bottom-start"
+                offset={4}
+                initialFocus={-1}
+                returnFocus={false}
+                onOpenChange={(open) => {
+                    if (!open) closeContextMenu();
+                }}
+                role="dialog"
+                aria-label={contextMilestone ? `Действия с вехой «${contextMilestone.title}»` : 'Действия с вехой'}
+            >
+                {contextMilestone &&
+                    (renaming ? (
+                        <div className="mv-gantt__context-rename" onContextMenu={(e) => e.preventDefault()}>
+                            <TextInput
+                                size="m"
+                                autoFocus
+                                value={contextTitle}
+                                onUpdate={setContextTitle}
+                                onFocus={(e) => e.target.select()}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        renameMilestone();
+                                    } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setRenaming(false);
+                                        setContextTitle(contextMilestone.title);
+                                    }
+                                }}
+                                placeholder="Название вехи"
+                                aria-label="Новое название вехи"
+                            />
+                            <div className="mv-gantt__context-rename-actions">
+                                <Button view="action" size="s" onClick={renameMilestone} disabled={!contextTitle.trim()}>
+                                    Сохранить
+                                </Button>
+                                <Button
+                                    view="flat"
+                                    size="s"
+                                    onClick={() => {
+                                        setRenaming(false);
+                                        setContextTitle(contextMilestone.title);
+                                    }}
+                                >
+                                    Отмена
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <Menu size="m" className="mv-gantt__context-menu">
+                            {onRename && (
+                                <Menu.Item iconStart={<Icon data={Pencil} size={16} />} onClick={() => setRenaming(true)}>
+                                    Переименовать
+                                </Menu.Item>
+                            )}
+                            {onDuplicate && (
+                                <Menu.Item
+                                    iconStart={<Icon data={CopyPlus} size={16} />}
+                                    onClick={() => {
+                                        closeContextMenu();
+                                        onDuplicate(contextMilestone);
+                                    }}
+                                >
+                                    Дублировать веху
+                                </Menu.Item>
+                            )}
+                        </Menu>
+                    ))}
+            </Popup>
             <DragOverlay>
                 {activeMilestone && (
                     <div className="mv-gantt__drag-overlay">
@@ -1062,6 +1177,21 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.onSave({...map, milestones: [...map.milestones, m]});
         p.onOpenMilestone(m.id);
     };
+    const duplicateMilestone = (m: Milestone) => {
+        const current = mapRef.current;
+        const index = current.milestones.findIndex((x) => x.id === m.id);
+        const source = index >= 0 ? current.milestones[index]! : m;
+        const copy: Milestone = {
+            ...source,
+            id: uid(),
+            title: `${source.title || 'Без названия'} — копия`,
+            blockedBy: undefined,
+        };
+        const milestones = [...current.milestones];
+        milestones.splice(index >= 0 ? index + 1 : milestones.length, 0, copy);
+        p.onSave({...current, milestones});
+        p.onOpenMilestone(copy.id);
+    };
     const moveMilestone = (id: string, epicId: string | null) => {
         const milestone = mapRef.current.milestones.find((m) => m.id === id);
         if (!milestone || (milestone.epicId ?? null) === epicId) return;
@@ -1184,6 +1314,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                 }
                 onMoveToEpic={p.disabled ? undefined : moveMilestone}
                 onOpen={(id) => p.onOpenMilestone(id)}
+                onRename={p.disabled ? undefined : (id, value) => patchMilestone(id, {title: value})}
+                onDuplicate={p.disabled ? undefined : duplicateMilestone}
                 onAdd={p.disabled ? undefined : addMilestone}
                 onOpenEpic={setEpicId}
                 onAddEpic={p.disabled ? undefined : addEpic}
@@ -1497,6 +1629,37 @@ function milestoneMeta(m: Milestone, all: Milestone[], tasks?: {done: number; to
         : null;
 }
 
+const RECENT_COLORS_KEY = 'muravey:roadmap-recent-colors';
+const RECENT_COLORS_LIMIT = 7;
+const DEFAULT_COLORS = [
+    {value: '#3697f1', name: 'Синий'},
+    {value: '#30aa6e', name: 'Зелёный'},
+    {value: '#eaa000', name: 'Жёлтый'},
+    {value: '#e05d4f', name: 'Красный'},
+    {value: '#8c5ac7', name: 'Фиолетовый'},
+    {value: '#d9579b', name: 'Розовый'},
+    {value: '#718096', name: 'Серый'},
+];
+
+function loadRecentColors() {
+    try {
+        const stored: unknown = JSON.parse(localStorage.getItem(RECENT_COLORS_KEY) ?? '[]');
+        if (Array.isArray(stored)) {
+            const colors = stored
+                .filter((c): c is string => typeof c === 'string' && /^#[\da-f]{6}$/i.test(c))
+                .map((c) => c.toLowerCase());
+            const recent = [...new Set(colors)].slice(0, RECENT_COLORS_LIMIT);
+            if (recent.length > 0) return recent;
+        }
+    } catch {
+        /* используем начальную палитру */
+    }
+    return DEFAULT_COLORS.map((c) => c.value);
+}
+
+const recentColorName = (value: string) =>
+    DEFAULT_COLORS.find((c) => c.value === value)?.name ?? `Цвет ${value.toUpperCase()}`;
+
 const shareUrl = (id: string) => `${window.location.origin}/?roadmap=${id}`;
 
 function MilestoneDetails({
@@ -1536,7 +1699,20 @@ function MilestoneDetails({
     const [title, setTitle] = React.useState(milestone.title);
     const [owner, setOwner] = React.useState(milestone.owner ?? '');
     const [risk, setRisk] = React.useState(milestone.risk ?? '');
+    const [recentColors, setRecentColors] = React.useState(loadRecentColors);
     const auto = useAutosave<Milestone>(onSave);
+    React.useEffect(() => {
+        try {
+            localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(recentColors));
+        } catch {
+            /* история цветов просто не сохранится между открытиями */
+        }
+    }, [recentColors]);
+    const chooseColor = (value: string) => {
+        const color = value.toLowerCase();
+        auto.save({color});
+        setRecentColors((current) => [color, ...current.filter((c) => c !== color)].slice(0, RECENT_COLORS_LIMIT));
+    };
     // сохранение нескольких вех показываем в том же статусе
     const allAuto = useAutosave<{list: Milestone[]}>((p) => (p.list ? onSaveAll(p.list) : null));
     const status = allAuto.state.kind !== 'idle' && auto.state.kind === 'idle' ? allAuto.state : auto.state;
@@ -1665,38 +1841,34 @@ function MilestoneDetails({
                     >
                         Авто
                     </Button>
-                    {[
-                        {value: '#3697f1', name: 'Синий'},
-                        {value: '#30aa6e', name: 'Зелёный'},
-                        {value: '#eaa000', name: 'Жёлтый'},
-                        {value: '#e05d4f', name: 'Красный'},
-                        {value: '#8c5ac7', name: 'Фиолетовый'},
-                        {value: '#d9579b', name: 'Розовый'},
-                        {value: '#718096', name: 'Серый'},
-                    ].map((c) => (
-                        <button
-                            key={c.value}
-                            type="button"
-                            className={`mv-color-picker__swatch${milestone.color === c.value ? ' mv-color-picker__swatch_on' : ''}`}
-                            style={{background: c.value}}
-                            onClick={() => auto.save({color: c.value})}
-                            aria-label={c.name}
-                            aria-pressed={milestone.color === c.value}
-                            title={c.name}
-                        />
-                    ))}
+                    {recentColors.map((color) => {
+                        const selected = milestone.color?.toLowerCase() === color;
+                        const name = recentColorName(color);
+                        return (
+                            <button
+                                key={color}
+                                type="button"
+                                className={`mv-color-picker__swatch${selected ? ' mv-color-picker__swatch_on' : ''}`}
+                                style={{background: color}}
+                                onClick={() => chooseColor(color)}
+                                aria-label={name}
+                                aria-pressed={selected}
+                                title={name}
+                            />
+                        );
+                    })}
                     <label className="mv-color-picker__custom" title="Выбрать другой цвет">
                         <input
                             type="color"
-                            value={milestone.color ?? '#3697f1'}
-                            onChange={(e) => auto.save({color: e.target.value})}
+                            value={milestone.color ?? recentColors[0] ?? '#3697f1'}
+                            onChange={(e) => chooseColor(e.target.value)}
                             aria-label="Свой цвет полосы"
                         />
                         <span>Свой цвет</span>
                     </label>
                 </div>
                 <Text variant="caption-2" color="secondary">
-                    «Авто» меняет цвет по статусу вехи. Выбранный цвет сохраняется при любом статусе.
+                    Показаны последние использованные цвета. «Авто» меняет цвет по статусу вехи.
                 </Text>
             </section>
 

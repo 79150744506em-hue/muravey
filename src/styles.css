@@ -2296,6 +2296,27 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     background: none;
     cursor: pointer;
 }
+.mv-gantt__context-anchor {
+    position: fixed;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}
+.mv-gantt__context-menu {
+    min-width: 220px;
+}
+.mv-gantt__context-rename {
+    display: grid;
+    gap: var(--g-spacing-3);
+    width: min(280px, calc(100vw - 32px));
+    box-sizing: border-box;
+    padding: var(--g-spacing-3);
+}
+.mv-gantt__context-rename-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--g-spacing-2);
+}
 .mv-gantt-shell {
     display: flex;
     flex-direction: column;
