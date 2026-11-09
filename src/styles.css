@@ -399,10 +399,12 @@ body {
 }
 .mv-row_completing {
     animation: mv-flash 0.6s ease-out;
+    pointer-events: none;
+}
+.mv-row_completing:not(.mv-row_completing_stay) {
     max-height: 0;
     padding-block: 0;
     opacity: 0;
-    pointer-events: none;
 }
 .mv-row_completing .mv-row__title {
     color: var(--g-color-text-secondary);

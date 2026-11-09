@@ -468,8 +468,12 @@ export function App() {
     const matches = (t: Task) => !filtering || t.tagIds.some((id) => activeFilter.includes(id));
     const open = all.filter((t) => !t.done && matches(t));
     const byList = (l: ListKind) => open.filter((t) => effectiveList(t, today) === l);
+    const completedToday = all.filter((t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today);
     const lists = {
-        today: byList('today').sort((a, b) => sortKey(a, 'today') - sortKey(b, 'today')),
+        today: [
+            ...byList('today'),
+            ...completedToday.filter((t) => matches(t) && effectiveList(t, today) === 'today'),
+        ].sort((a, b) => sortKey(a, 'today') - sortKey(b, 'today')),
         focus: byList('focus').sort((a, b) => sortKey(a, 'focus') - sortKey(b, 'focus')),
         backlog: byList('backlog').sort((a, b) => sortKey(a, 'backlog') - sortKey(b, 'backlog')),
         done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
@@ -533,11 +537,9 @@ export function App() {
             }),
         );
     };
-    const doneToday = all.filter((t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today).length;
-    const visibleDoneToday = all.filter(
-        (t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today && matches(t),
-    ).length;
-    const dayTotal = visibleDoneToday + lists.today.length;
+    const doneToday = completedToday.length;
+    const visibleDoneToday = lists.today.filter((t) => t.done).length;
+    const dayTotal = lists.today.length;
 
     const createTag = (name: string): Tag => {
         const tag: Tag = {
@@ -1529,9 +1531,11 @@ function TaskRow({
             ref={drag.ref}
             style={drag.style}
             {...drag.props}
-            className={`mv-row${completing ? ' mv-row_completing' : ''}${task.done ? ' mv-row_done' : ''}${
-                sortable ? ' mv-row_sortable' : ''
-            }${drag.isDragging ? ' mv-row_dragging' : ''}${hungry !== null ? ' mv-row_hungry' : ''}`}
+            className={`mv-row${completing ? ' mv-row_completing' : ''}${
+                completing && list === 'today' ? ' mv-row_completing_stay' : ''
+            }${task.done ? ' mv-row_done' : ''}${sortable ? ' mv-row_sortable' : ''}${
+                drag.isDragging ? ' mv-row_dragging' : ''
+            }${hungry !== null ? ' mv-row_hungry' : ''}`}
             onClick={() => {
                 if (!drag.consumeDrag()) onOpen();
             }}
