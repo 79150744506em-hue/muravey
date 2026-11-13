@@ -1,5 +1,26 @@
 import React from 'react';
 import {
+    DndContext,
+    DragOverlay,
+    KeyboardSensor,
+    MouseSensor,
+    TouchSensor,
+    closestCenter,
+    useDroppable,
+    useSensor,
+    useSensors,
+} from '@dnd-kit/core';
+import type {DragEndEvent} from '@dnd-kit/core';
+import {
+    SortableContext,
+    arrayMove,
+    rectSortingStrategy,
+    sortableKeyboardCoordinates,
+    useSortable,
+    verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {CSS} from '@dnd-kit/utilities';
+import {
     ActionTooltip,
     Button,
     Checkbox,
@@ -20,6 +41,7 @@ import {
     ChartLine,
     CopyPlus,
     Cube,
+    Grip,
     Plus,
     TextAlignLeft,
     TrashBin,
@@ -80,7 +102,14 @@ export function riceScore(task: Pick<ProductTask, 'reach' | 'impact' | 'confiden
         Math.max(1, totalEffort(task));
 }
 
-const statusOptions = (Object.keys(PRODUCT_STATUSES) as ProductTaskStatus[]).map((value) => ({
+const PRODUCT_STATUS_ORDER = Object.keys(PRODUCT_STATUSES) as ProductTaskStatus[];
+const STATUS_DROP_PREFIX = 'product-status:';
+const byRice = (a: ProductTask, b: ProductTask) =>
+    riceScore(b) - riceScore(a) || b.createdAt.localeCompare(a.createdAt);
+const byProductOrder = (a: Product, b: Product) =>
+    (a.order ?? -Date.parse(a.createdAt)) - (b.order ?? -Date.parse(b.createdAt)) ||
+    b.createdAt.localeCompare(a.createdAt);
+const statusOptions = PRODUCT_STATUS_ORDER.map((value) => ({
     value,
     content: PRODUCT_STATUSES[value],
 }));
@@ -119,6 +148,12 @@ type ProductsProps = {
 export function ProductsView(p: ProductsProps) {
     const [creating, setCreating] = React.useState(false);
     const [title, setTitle] = React.useState('');
+    const [activeProductId, setActiveProductId] = React.useState<string | null>(null);
+    const sensors = useSensors(
+        useSensor(MouseSensor, {activationConstraint: {distance: 5}}),
+        useSensor(TouchSensor, {activationConstraint: {delay: 200, tolerance: 6}}),
+        useSensor(KeyboardSensor, {coordinateGetter: sortableKeyboardCoordinates}),
+    );
     const product = p.products?.find((item) => item.id === p.productId);
 
     if (p.products === null) {
@@ -131,7 +166,19 @@ export function ProductsView(p: ProductsProps) {
     }
     if (product) return <ProductPage key={product.id} {...p} product={product} />;
 
-    const sorted = [...p.products].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const sorted = [...p.products].sort(byProductOrder);
+    const activeProduct = sorted.find((item) => item.id === activeProductId);
+    const onProductDragEnd = ({active, over}: DragEndEvent) => {
+        setActiveProductId(null);
+        if (!over || active.id === over.id) return;
+        const from = sorted.findIndex((item) => item.id === String(active.id));
+        const to = sorted.findIndex((item) => item.id === String(over.id));
+        if (from < 0 || to < 0) return;
+        arrayMove(sorted, from, to).forEach((item, index) => {
+            const order = index * 1024;
+            if (item.order !== order) p.onSave({...item, order});
+        });
+    };
     const create = () => {
         const name = title.trim();
         if (!name) return;
@@ -141,6 +188,7 @@ export function ProductsView(p: ProductsProps) {
             description: '',
             tasks: [],
             createdAt: new Date().toISOString(),
+            order: Math.min(0, ...sorted.map((item) => item.order ?? 0)) - 1024,
         };
         p.onSave(item);
         setTitle('');
@@ -173,37 +221,39 @@ export function ProductsView(p: ProductsProps) {
                     </Button>
                 </div>
             ) : (
-                <ul className="mv-products__grid">
-                    {sorted.map((item) => {
-                        const active = item.tasks.filter((task) => task.status !== 'archive').length;
-                        const leader = [...item.tasks].sort((a, b) => riceScore(b) - riceScore(a))[0];
-                        return (
-                            <li key={item.id}>
-                                <button type="button" className="mv-product-card" onClick={() => p.onOpenProduct(item.id)}>
-                                    <span className="mv-product-card__icon"><Icon data={Cube} size={22} /></span>
-                                    <span className="mv-product-card__title">{item.title}</span>
-                                    <span className="mv-product-card__description">
-                                        {item.description?.trim() || 'Бэклог продукта и приоритизация фич'}
-                                    </span>
-                                    <span className="mv-product-card__stats">
-                                        <span><strong>{featuresWord(item.tasks.length)}</strong></span>
-                                        <span>{active} вне архива</span>
-                                    </span>
-                                    {leader && (
-                                        <span className="mv-product-card__leader">
-                                            <Icon data={ChartLine} size={15} />
-                                            <span>{leader.title || 'Без названия'}</span>
-                                            <strong>{numberFormat.format(riceScore(leader))}</strong>
-                                        </span>
-                                    )}
-                                    <span className="mv-product-card__open">
-                                        Открыть продукт <Icon data={ArrowRight} size={15} />
-                                    </span>
-                                </button>
-                            </li>
-                        );
-                    })}
-                </ul>
+                <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragStart={({active}) => setActiveProductId(String(active.id))}
+                    onDragEnd={onProductDragEnd}
+                    onDragCancel={() => setActiveProductId(null)}
+                    accessibility={{
+                        screenReaderInstructions: {
+                            draggable: 'Пробел, чтобы взять продукт, стрелки, чтобы изменить порядок, пробел, чтобы отпустить.',
+                        },
+                    }}
+                >
+                    <SortableContext items={sorted.map((item) => item.id)} strategy={rectSortingStrategy} disabled={p.disabled}>
+                        <ul className="mv-products__grid">
+                            {sorted.map((item) => (
+                                <SortableProductCard
+                                    key={item.id}
+                                    product={item}
+                                    disabled={p.disabled}
+                                    onOpen={() => p.onOpenProduct(item.id)}
+                                />
+                            ))}
+                        </ul>
+                    </SortableContext>
+                    <DragOverlay>
+                        {activeProduct && (
+                            <div className="mv-product-drag-overlay">
+                                <Icon data={Cube} size={18} />
+                                <span>{activeProduct.title}</span>
+                            </div>
+                        )}
+                    </DragOverlay>
+                </DndContext>
             )}
 
             <Dialog open={creating} onClose={() => setCreating(false)} size="s" aria-label="Новый продукт">
@@ -231,11 +281,65 @@ export function ProductsView(p: ProductsProps) {
     );
 }
 
+function SortableProductCard({product, disabled, onOpen}: {product: Product; disabled: boolean; onOpen: () => void}) {
+    const dnd = useSortable({id: product.id, disabled});
+    const active = product.tasks.filter((task) => task.status !== 'archive').length;
+    const leader = [...product.tasks].sort(byRice)[0];
+    return (
+        <li
+            ref={dnd.setNodeRef}
+            className={`mv-product-card-shell${dnd.isDragging ? ' mv-product-card-shell_dragging' : ''}`}
+            style={{transform: CSS.Transform.toString(dnd.transform), transition: dnd.transition}}
+        >
+            <div className="mv-product-card">
+                <button type="button" className="mv-product-card__body" onClick={onOpen}>
+                    <span className="mv-product-card__icon"><Icon data={Cube} size={22} /></span>
+                    <span className="mv-product-card__title">{product.title}</span>
+                    <span className="mv-product-card__description">
+                        {product.description?.trim() || 'Бэклог продукта и приоритизация фич'}
+                    </span>
+                    <span className="mv-product-card__stats">
+                        <span><strong>{featuresWord(product.tasks.length)}</strong></span>
+                        <span>{active} вне архива</span>
+                    </span>
+                    {leader && (
+                        <span className="mv-product-card__leader">
+                            <Icon data={ChartLine} size={15} />
+                            <span>{leader.title || 'Без названия'}</span>
+                            <strong>{numberFormat.format(riceScore(leader))}</strong>
+                        </span>
+                    )}
+                    <span className="mv-product-card__open">
+                        Открыть продукт <Icon data={ArrowRight} size={15} />
+                    </span>
+                </button>
+                <button
+                    ref={dnd.setActivatorNodeRef}
+                    type="button"
+                    className="mv-product-card__drag"
+                    {...dnd.attributes}
+                    {...dnd.listeners}
+                    disabled={disabled}
+                    aria-label={`Переместить продукт ${product.title}`}
+                    title="Перетащить продукт"
+                >
+                    <Icon data={Grip} size={17} />
+                </button>
+            </div>
+        </li>
+    );
+}
+
 function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
     const [title, setTitle] = React.useState(product.title);
     const [openTaskId, setOpenTaskId] = React.useState<string | null>(null);
     const [draft, setDraft] = React.useState<ProductTask | null>(null);
-    const [statusFilter, setStatusFilter] = React.useState('all');
+    const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
+    const sensors = useSensors(
+        useSensor(MouseSensor, {activationConstraint: {distance: 5}}),
+        useSensor(TouchSensor, {activationConstraint: {delay: 200, tolerance: 6}}),
+        useSensor(KeyboardSensor, {coordinateGetter: sortableKeyboardCoordinates}),
+    );
     const productRef = React.useRef(product);
     productRef.current = product;
     const draftRef = React.useRef<ProductTask | null>(null);
@@ -300,10 +404,43 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
         });
     };
 
+    const onTaskDragEnd = ({active, over}: DragEndEvent) => {
+        setActiveTaskId(null);
+        if (!over) return;
+        const current = productRef.current;
+        const task = current.tasks.find((item) => item.id === String(active.id));
+        if (!task) return;
+        const overId = String(over.id);
+        let status: ProductTaskStatus | undefined;
+        if (overId.startsWith(STATUS_DROP_PREFIX)) {
+            const candidate = overId.slice(STATUS_DROP_PREFIX.length) as ProductTaskStatus;
+            if (PRODUCT_STATUS_ORDER.includes(candidate)) status = candidate;
+        } else {
+            status = current.tasks.find((item) => item.id === overId)?.status;
+        }
+        if (!status || status === task.status) return;
+        const previous = task.status;
+        p.onSave({
+            ...current,
+            tasks: current.tasks.map((item) => (item.id === task.id ? {...item, status} : item)),
+        });
+        p.undoable(`Задача «${task.title}» перенесена в «${PRODUCT_STATUSES[status]}»`, () => {
+            const latest = productRef.current;
+            p.onSave({
+                ...latest,
+                tasks: latest.tasks.map((item) => (item.id === task.id ? {...item, status: previous} : item)),
+            });
+        });
+    };
+
     const storedCard = product.tasks.find((task) => task.id === openTaskId) ?? null;
     const cardTask = storedCard ?? (draft?.id === openTaskId ? draft : null);
-    const sorted = [...product.tasks].sort((a, b) => riceScore(b) - riceScore(a) || b.createdAt.localeCompare(a.createdAt));
-    const visible = statusFilter === 'all' ? sorted : sorted.filter((task) => task.status === statusFilter);
+    const groups = PRODUCT_STATUS_ORDER.map((status) => ({
+        status,
+        tasks: product.tasks.filter((task) => task.status === status).sort(byRice),
+    }));
+    const sorted = groups.flatMap((group) => group.tasks);
+    const activeTask = sorted.find((task) => task.id === activeTaskId);
     const inProgress = product.tasks.filter((task) => task.status === 'inProgress').length;
 
     return (
@@ -381,13 +518,6 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                         </Text>
                     </div>
                     <div className="mv-product-backlog__actions">
-                        <Select
-                            value={[statusFilter]}
-                            onUpdate={([value]) => setStatusFilter(value)}
-                            options={[{value: 'all', content: 'Все статусы'}, ...statusOptions]}
-                            aria-label="Фильтр по статусу"
-                            width={170}
-                        />
                         <Button view="action" onClick={addTask} disabled={p.disabled}>
                             <Icon data={Plus} size={16} />
                             Добавить задачу
@@ -395,97 +525,84 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                     </div>
                 </div>
 
-                {visible.length > 0 ? (
-                    <div className="mv-product-table-wrap">
-                        <table className="mv-product-table">
-                            <thead>
-                                <tr>
-                                    <th className="mv-product-table__rank">#</th>
-                                    <th>Название фичи</th>
-                                    <th>Статус</th>
-                                    <th className="mv-product-table__number">Reach</th>
-                                    <th className="mv-product-table__number">Impact</th>
-                                    <th className="mv-product-table__number">Confidence</th>
-                                    <th className="mv-product-table__number">Σ оценка</th>
-                                    <th className="mv-product-table__score">
-                                        <span>RICE Score <Icon data={ArrowDown} size={13} /></span>
-                                    </th>
-                                    <th><span className="mv-visually-hidden">Действия</span></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {visible.map((task) => {
-                                    const rank = sorted.indexOf(task) + 1;
-                                    return (
-                                        <tr key={task.id}>
-                                            <td className="mv-product-table__rank" data-label="Приоритет">{rank}</td>
-                                            <td className="mv-product-table__feature" data-label="Название фичи">
-                                                <button type="button" onClick={() => setOpenTaskId(task.id)}>
-                                                    <span>{task.title || 'Без названия'}</span>
-                                                    {task.description.trim() && <Icon data={TextAlignLeft} size={14} />}
-                                                </button>
-                                            </td>
-                                            <td data-label="Статус">
-                                                <Label theme={STATUS_THEMES[task.status]} size="s">
-                                                    {PRODUCT_STATUSES[task.status]}
-                                                </Label>
-                                            </td>
-                                            <td className="mv-product-table__number" data-label="Reach">{numberFormat.format(task.reach)}</td>
-                                            <td className="mv-product-table__number" data-label="Impact">{task.impact}</td>
-                                            <td className="mv-product-table__number" data-label="Confidence">{task.confidence}%</td>
-                                            <td className="mv-product-table__number" data-label="Суммарная оценка">{numberFormat.format(totalEffort(task))}</td>
-                                            <td className="mv-product-table__score" data-label="RICE Score">
-                                                <button type="button" onClick={() => setOpenTaskId(task.id)} aria-label={`Открыть задачу ${task.title}`}>
-                                                    {numberFormat.format(riceScore(task))}
-                                                </button>
-                                            </td>
-                                            <td className="mv-product-table__menu" onClick={(event) => event.stopPropagation()}>
-                                                <DropdownMenu
-                                                    size="s"
-                                                    items={[
-                                                        {
-                                                            text: 'Дублировать',
-                                                            iconStart: <Icon data={CopyPlus} size={16} />,
-                                                            action: () => duplicateTask(task),
-                                                        },
-                                                        {
-                                                            text: 'Удалить',
-                                                            theme: 'danger',
-                                                            iconStart: <Icon data={TrashBin} size={16} />,
-                                                            action: () => removeTask(task),
-                                                        },
-                                                    ]}
-                                                />
-                                            </td>
+                {product.tasks.length > 0 ? (
+                    <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragStart={({active}) => setActiveTaskId(String(active.id))}
+                        onDragEnd={onTaskDragEnd}
+                        onDragCancel={() => setActiveTaskId(null)}
+                        accessibility={{
+                            screenReaderInstructions: {
+                                draggable:
+                                    'Пробел, чтобы взять задачу, стрелки, чтобы выбрать группу статуса, пробел, чтобы отпустить.',
+                            },
+                        }}
+                    >
+                        <div className="mv-product-table-wrap">
+                            <SortableContext
+                                items={sorted.map((task) => task.id)}
+                                strategy={verticalListSortingStrategy}
+                                disabled={p.disabled}
+                            >
+                                <table className="mv-product-table">
+                                    <thead>
+                                        <tr>
+                                            <th className="mv-product-table__rank">#</th>
+                                            <th>Название фичи</th>
+                                            <th>Статус</th>
+                                            <th className="mv-product-table__number">Reach</th>
+                                            <th className="mv-product-table__number">Impact</th>
+                                            <th className="mv-product-table__number">Confidence</th>
+                                            <th className="mv-product-table__number">Σ оценка</th>
+                                            <th className="mv-product-table__score">
+                                                <span>RICE Score <Icon data={ArrowDown} size={13} /></span>
+                                            </th>
+                                            <th><span className="mv-visually-hidden">Действия</span></th>
                                         </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
+                                    </thead>
+                                    {groups.map((group) => (
+                                        <ProductStatusGroup
+                                            key={group.status}
+                                            status={group.status}
+                                            tasks={group.tasks}
+                                            dragging={Boolean(activeTask)}
+                                            disabled={p.disabled}
+                                            onOpen={setOpenTaskId}
+                                            onDuplicate={duplicateTask}
+                                            onDelete={removeTask}
+                                        />
+                                    ))}
+                                </table>
+                            </SortableContext>
+                        </div>
+                        <DragOverlay>
+                            {activeTask && (
+                                <div className="mv-product-task-drag">
+                                    <Icon data={Grip} size={16} />
+                                    <span>{activeTask.title || 'Без названия'}</span>
+                                    <strong>{numberFormat.format(riceScore(activeTask))}</strong>
+                                </div>
+                            )}
+                        </DragOverlay>
+                    </DndContext>
                 ) : (
                     <div className="mv-product-backlog__empty">
                         <span className="mv-product-backlog__empty-icon"><Icon data={ChartLine} size={24} /></span>
-                        <Text variant="subheader-1">
-                            {product.tasks.length ? 'Нет задач с выбранным статусом' : 'Добавьте первую фичу'}
-                        </Text>
+                        <Text variant="subheader-1">Добавьте первую фичу</Text>
                         <Text color="secondary">
-                            {product.tasks.length
-                                ? 'Выберите другой статус, чтобы увидеть задачи.'
-                                : 'Заполните RICE-параметры и оценки команды — таблица сама построит приоритеты.'}
+                            Заполните RICE-параметры и оценки команды — таблица сама построит приоритеты.
                         </Text>
-                        {!product.tasks.length && (
-                            <Button view="outlined" onClick={addTask} disabled={p.disabled}>
-                                <Icon data={Plus} size={16} />
-                                Создать задачу
-                            </Button>
-                        )}
+                        <Button view="outlined" onClick={addTask} disabled={p.disabled}>
+                            <Icon data={Plus} size={16} />
+                            Создать задачу
+                        </Button>
                     </div>
                 )}
-                {visible.length > 0 && (
+                {product.tasks.length > 0 && (
                     <div className="mv-product-backlog__foot">
                         <Text variant="caption-2" color="secondary">
-                            RICE = Reach × Impact × Confidence ÷ Effort · сортировка от большего к меньшему
+                            Внутри каждого статуса — по убыванию RICE. За значок <span aria-hidden="true">⋮⋮</span> задачу можно перенести в другой статус.
                         </Text>
                     </div>
                 )}
@@ -514,6 +631,137 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                 )}
             </Dialog>
         </div>
+    );
+}
+
+function ProductStatusGroup({
+    status,
+    tasks,
+    dragging,
+    disabled,
+    onOpen,
+    onDuplicate,
+    onDelete,
+}: {
+    status: ProductTaskStatus;
+    tasks: ProductTask[];
+    dragging: boolean;
+    disabled: boolean;
+    onOpen: (id: string) => void;
+    onDuplicate: (task: ProductTask) => void;
+    onDelete: (task: ProductTask) => void;
+}) {
+    const drop = useDroppable({id: STATUS_DROP_PREFIX + status, disabled});
+    return (
+        <tbody ref={drop.setNodeRef} className={`mv-product-table__group${drop.isOver ? ' mv-product-table__group_over' : ''}`}>
+            <tr className="mv-product-table__group-head">
+                <th colSpan={9}>
+                    <div>
+                        <Label theme={STATUS_THEMES[status]} size="s">{PRODUCT_STATUSES[status]}</Label>
+                        <span>{featuresWord(tasks.length)}</span>
+                        {drop.isOver && <strong>Отпустите, чтобы перенести</strong>}
+                    </div>
+                </th>
+            </tr>
+            {tasks.map((task, index) => (
+                <ProductTaskRow
+                    key={task.id}
+                    task={task}
+                    rank={index + 1}
+                    disabled={disabled}
+                    onOpen={() => onOpen(task.id)}
+                    onDuplicate={() => onDuplicate(task)}
+                    onDelete={() => onDelete(task)}
+                />
+            ))}
+            {tasks.length === 0 && (
+                <tr className="mv-product-table__group-empty">
+                    <td colSpan={9}>{dragging ? 'Перетащите задачу в этот статус' : 'Нет задач'}</td>
+                </tr>
+            )}
+        </tbody>
+    );
+}
+
+function ProductTaskRow({
+    task,
+    rank,
+    disabled,
+    onOpen,
+    onDuplicate,
+    onDelete,
+}: {
+    task: ProductTask;
+    rank: number;
+    disabled: boolean;
+    onOpen: () => void;
+    onDuplicate: () => void;
+    onDelete: () => void;
+}) {
+    const dnd = useSortable({id: task.id, disabled});
+    return (
+        <tr
+            ref={dnd.setNodeRef}
+            className={dnd.isDragging ? 'mv-product-table__row_dragging' : undefined}
+            style={{transform: CSS.Translate.toString(dnd.transform), transition: dnd.transition}}
+        >
+            <td className="mv-product-table__rank" data-label="Приоритет">
+                <span className="mv-product-table__rank-inner">
+                    <button
+                        ref={dnd.setActivatorNodeRef}
+                        type="button"
+                        className="mv-product-table__drag"
+                        {...dnd.attributes}
+                        {...dnd.listeners}
+                        disabled={disabled}
+                        aria-label={`Переместить задачу ${task.title}`}
+                        aria-roledescription="перетаскиваемая задача"
+                        title="Перетащить в другой статус"
+                    >
+                        <Icon data={Grip} size={14} />
+                    </button>
+                    <span>{rank}</span>
+                </span>
+            </td>
+            <td className="mv-product-table__feature" data-label="Название фичи">
+                <button type="button" onClick={onOpen}>
+                    <span>{task.title || 'Без названия'}</span>
+                    {task.description.trim() && <Icon data={TextAlignLeft} size={14} />}
+                </button>
+            </td>
+            <td data-label="Статус">
+                <Label theme={STATUS_THEMES[task.status]} size="s">
+                    {PRODUCT_STATUSES[task.status]}
+                </Label>
+            </td>
+            <td className="mv-product-table__number" data-label="Reach">{numberFormat.format(task.reach)}</td>
+            <td className="mv-product-table__number" data-label="Impact">{task.impact}</td>
+            <td className="mv-product-table__number" data-label="Confidence">{task.confidence}%</td>
+            <td className="mv-product-table__number" data-label="Суммарная оценка">{numberFormat.format(totalEffort(task))}</td>
+            <td className="mv-product-table__score" data-label="RICE Score">
+                <button type="button" onClick={onOpen} aria-label={`Открыть задачу ${task.title}`}>
+                    {numberFormat.format(riceScore(task))}
+                </button>
+            </td>
+            <td className="mv-product-table__menu" onClick={(event) => event.stopPropagation()}>
+                <DropdownMenu
+                    size="s"
+                    items={[
+                        {
+                            text: 'Дублировать',
+                            iconStart: <Icon data={CopyPlus} size={16} />,
+                            action: onDuplicate,
+                        },
+                        {
+                            text: 'Удалить',
+                            theme: 'danger',
+                            iconStart: <Icon data={TrashBin} size={16} />,
+                            action: onDelete,
+                        },
+                    ]}
+                />
+            </td>
+        </tr>
     );
 }
 

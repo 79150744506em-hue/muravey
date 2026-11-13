@@ -165,6 +165,7 @@ export interface Product {
     description?: string;
     tasks: ProductTask[];
     createdAt: string;
+    order?: number | null;
 }
 
 export const TAG_THEMES: TagTheme[] = ['info', 'success', 'warning', 'danger', 'utility', 'normal'];
