@@ -123,7 +123,7 @@ DOMAIN="$(yc serverless api-gateway get --name "$GW_NAME" --format json | jq -r 
 STEP="Проверка сайта"; echo "== Проверка сайта"
 sleep 5
 for PATH_ in / /privacy.html /manifest.webmanifest /sw.js /.well-known/assetlinks.json; do
-  META="$(curl -fsS --max-time 30 -o /dev/null -w '%{http_code} %{size_download}' "https://$DOMAIN$PATH_")"
+  META="$(retry curl -fsS --connect-timeout 15 --max-time 120 -o /dev/null -w '%{http_code} %{size_download}' "https://$DOMAIN$PATH_")"
   read -r CODE SIZE <<<"$META"
   if [ "$CODE" != "200" ] || [ "$SIZE" -le 0 ]; then
     echo "::error title=Проверка сайта не пройдена::GET $PATH_ вернул $CODE, размер $SIZE байт"
