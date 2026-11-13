@@ -23,6 +23,7 @@ import {
     ArrowUturnCcwLeft,
     BarsUnaligned,
     CircleCheck,
+    Cube,
     Flag,
     Link,
     LinkSlash,
@@ -46,7 +47,7 @@ import {pickBackend} from './store';
 import type {LoginOptions} from './store';
 import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
-import type {ListKind, Milestone, Roadmap, Stakeholder, StakeholderMap, Tag, TagTheme, Task} from './types';
+import type {ListKind, Milestone, Product, Roadmap, Stakeholder, StakeholderMap, Tag, TagTheme, Task} from './types';
 import {AddListItem} from './AddListItem';
 import {DateField} from './DateField';
 import {TaskPicker} from './TaskPicker';
@@ -54,14 +55,16 @@ import {BackupMenu} from './Backup';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
 import {RoadmapsView, datesText} from './Roadmaps';
+import {ProductsView} from './Products';
 import {ContactDialog, DueChip, StakeholdersView, findPerson, zoneName} from './Stakeholders';
 import {SaveStatus} from './SaveStatus';
 import {SortableList, useSortableRow} from './SortableList';
 import logo from './assets/logo.png';
 
-type View = ListKind | 'done' | 'roadmap' | 'stakeholders';
+type View = ListKind | 'done' | 'roadmap' | 'stakeholders' | 'products';
 // вкладки со своими сущностями, а не со списками задач
-const isMapView = (v: View): v is 'roadmap' | 'stakeholders' => v === 'roadmap' || v === 'stakeholders';
+const isMapView = (v: View): v is 'roadmap' | 'stakeholders' | 'products' =>
+    v === 'roadmap' || v === 'stakeholders' || v === 'products';
 
 const LIST_NAMES: Record<ListKind, string> = {today: 'Сегодня', focus: 'Фокус', backlog: 'Бэклог'};
 const THEME_NAMES: Record<TagTheme, string> = {
@@ -103,19 +106,20 @@ export function App() {
     const [tasks, setTasks] = React.useState<Task[] | null>(null);
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
-    // в адресе: #today, #roadmap, #roadmap/<id карты> или #stakeholders/<id карты>
+    // в адресе: #today, #roadmap/<id карты>, #stakeholders/<id карты> или #products/<id продукта>
     const [view, setView] = React.useState<View>(() => {
         const h = window.location.hash.slice(1).split('/')[0];
-        return (['today', 'focus', 'backlog', 'done', 'roadmap', 'stakeholders'] as View[]).includes(h as View)
+        return (['today', 'focus', 'backlog', 'done', 'roadmap', 'stakeholders', 'products'] as View[]).includes(h as View)
             ? (h as View)
             : 'today';
     });
     const [roadmaps, setRoadmaps] = React.useState<Roadmap[] | null>(null);
     const [peopleMaps, setPeopleMaps] = React.useState<StakeholderMap[] | null>(null);
-    // открытая карта: дорожная или карта стейкхолдеров, смотря какая вкладка
+    const [products, setProducts] = React.useState<Product[] | null>(null);
+    // открытая карта или продукт, смотря какая вкладка
     const [mapId, setMapId] = React.useState<string | null>(() => {
         const [h, id] = window.location.hash.slice(1).split('/');
-        return (h === 'roadmap' || h === 'stakeholders') && id ? id : null;
+        return (h === 'roadmap' || h === 'stakeholders' || h === 'products') && id ? id : null;
     });
     const [milestoneId, setMilestoneId] = React.useState<string | null>(null);
     const [personId, setPersonId] = React.useState<string | null>(null);
@@ -174,7 +178,7 @@ export function App() {
             if (!alive) return;
             setLogin(null);
             setBackend(b);
-            unsub = b.subscribe(setTasks, setTags, setError, setRoadmaps, setPeopleMaps);
+            unsub = b.subscribe(setTasks, setTags, setError, setRoadmaps, setPeopleMaps, setProducts);
         };
         pickBackend().then((r) => {
             if (!alive) return;
@@ -421,6 +425,17 @@ export function App() {
         run(pr);
         return pr;
     };
+    const saveProduct = (product: Product) => {
+        if (!backend) return null;
+        const pr = backend.saveProduct(product);
+        run(pr);
+        return pr;
+    };
+    const removeProduct = (product: Product) => {
+        if (!backend) return;
+        run(backend.removeProduct(product.id));
+        undoable(`Продукт «${product.title}» удалён`, () => run(backend.saveProduct(product)));
+    };
     // покормили стейкхолдера: задача на следующий контакт ждёт в бэклоге до своего дня
     const feedPerson = (s: Stakeholder, title: string, date: string) => {
         if (!backend) return;
@@ -584,6 +599,7 @@ export function App() {
         {id: 'today', title: 'Сегодня', short: 'Сегодня', icon: Sun, counter: lists.today.length},
         {id: 'focus', title: 'Фокус', short: 'Фокус', icon: Target, counter: lists.focus.length},
         {id: 'backlog', title: 'Бэклог', short: 'Бэклог', icon: Tray, counter: lists.backlog.length},
+        {id: 'products', title: 'Продукты', short: 'Продукты', icon: Cube, counter: products?.length},
         {id: 'done', title: 'Выполненные', short: 'Готово', icon: CircleCheck, counter: undefined},
         {id: 'roadmap', title: 'Roadmap', short: 'Roadmap', icon: BarsUnaligned, counter: undefined},
         {id: 'stakeholders', title: 'Стейкхолдеры', short: 'Люди', icon: Persons, counter: undefined},
@@ -649,6 +665,7 @@ export function App() {
                         tags={tags}
                         roadmaps={roadmaps ?? []}
                         stakeholders={peopleMaps ?? []}
+                        products={products ?? []}
                         onResult={(r) => (r.ok ? setNotice(r.message) : setError(r.message))}
                     />
                 </div>
@@ -689,7 +706,17 @@ export function App() {
                     </Text>
                 )}
 
-                {view === 'roadmap' ? (
+                {view === 'products' ? (
+                    <ProductsView
+                        products={products}
+                        productId={mapId}
+                        onOpenProduct={(id) => switchView('products', id)}
+                        disabled={!backend}
+                        onSave={saveProduct}
+                        onRemove={removeProduct}
+                        undoable={undoable}
+                    />
+                ) : view === 'roadmap' ? (
                     <RoadmapsView
                         roadmaps={roadmaps}
                         tasks={all}
@@ -792,7 +819,7 @@ export function App() {
 
             {backend?.kind === 'local' && (
                 <Text variant="caption-2" color="secondary" className="mv-footnote">
-                    Задачи сохраняются в этом браузере.
+                    Данные сохраняются в этом браузере.
                 </Text>
             )}
             </div>
@@ -1314,8 +1341,8 @@ function PlanHero({hasBacklog, completed = false, disabled, onPlan}: {
     );
 }
 
-function EmptyState({view, hasBacklog}: {view: Exclude<View, 'roadmap' | 'stakeholders'>; hasBacklog: boolean}) {
-    const text: Record<Exclude<View, 'roadmap' | 'stakeholders'>, string> = {
+function EmptyState({view, hasBacklog}: {view: Exclude<View, 'roadmap' | 'stakeholders' | 'products'>; hasBacklog: boolean}) {
+    const text: Record<Exclude<View, 'roadmap' | 'stakeholders' | 'products'>, string> = {
         today: hasBacklog
             ? 'На сегодня пока ничего. Возьмите задачи из бэклога.'
             : 'На сегодня пока ничего. Добавьте задачи в бэклог, а потом запланируйте их сюда.',

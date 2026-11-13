@@ -129,6 +129,44 @@ export interface StakeholderMap {
     createdAt: string;
 }
 
+export const PRODUCT_ROLE_IDS = [
+    'projectManager',
+    'architect',
+    'artDirector',
+    'qaLead',
+    'systemAnalyst',
+    'iosDeveloper',
+    'androidDeveloper',
+    'backendEngineer',
+    'frontendEngineer',
+    'qa',
+    'designer',
+    'businessAnalyst',
+] as const;
+
+export type ProductRoleId = (typeof PRODUCT_ROLE_IDS)[number];
+export type ProductTaskStatus = 'new' | 'estimation' | 'estimated' | 'inProgress' | 'done' | 'archive';
+
+export interface ProductTask {
+    id: string;
+    title: string;
+    description: string;
+    status: ProductTaskStatus;
+    reach: number;
+    impact: number;
+    confidence: number;
+    estimates: Partial<Record<ProductRoleId, number | null>>;
+    createdAt: string;
+}
+
+export interface Product {
+    id: string;
+    title: string;
+    description?: string;
+    tasks: ProductTask[];
+    createdAt: string;
+}
+
 export const TAG_THEMES: TagTheme[] = ['info', 'success', 'warning', 'danger', 'utility', 'normal'];
 
 export function uid() {

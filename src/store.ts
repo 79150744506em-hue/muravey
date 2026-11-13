@@ -1,4 +1,4 @@
-import type {Roadmap, StakeholderMap, Tag, Task} from './types';
+import type {Product, Roadmap, StakeholderMap, Tag, Task} from './types';
 
 export interface Backend {
     kind: 'cloud' | 'local' | 'server';
@@ -8,6 +8,7 @@ export interface Backend {
         onError: (msg: string) => void,
         onRoadmaps: (r: Roadmap[]) => void,
         onStakeholders: (m: StakeholderMap[]) => void,
+        onProducts: (p: Product[]) => void,
     ): () => void;
     saveTask(t: Task): Promise<void>;
     removeTask(id: string): Promise<void>;
@@ -17,11 +18,13 @@ export interface Backend {
     removeRoadmap(id: string): Promise<void>;
     saveStakeholderMap(m: StakeholderMap): Promise<void>;
     removeStakeholderMap(id: string): Promise<void>;
+    saveProduct(p: Product): Promise<void>;
+    removeProduct(id: string): Promise<void>;
     /** включить и выключить публичную ссылку (есть только у своего сервера) */
     shareRoadmap?(id: string): Promise<void>;
     unshareRoadmap?(id: string): Promise<void>;
-    /** Слить задачи, теги, дорожные карты и карты стейкхолдеров из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
-    importAll(tasks: Task[], tags: Tag[], roadmaps: Roadmap[], stakeholders: StakeholderMap[]): Promise<void>;
+    /** Слить задачи, теги, дорожные карты, карты стейкхолдеров и продукты из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
+    importAll(tasks: Task[], tags: Tag[], roadmaps: Roadmap[], stakeholders: StakeholderMap[], products: Product[]): Promise<void>;
     /** выйти из аккаунта (есть только там, где есть вход) */
     signOut?(): Promise<void>;
 }
@@ -37,6 +40,7 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
     const tagsCol = root.collection('tags');
     const mapsCol = root.collection('roadmaps');
     const peopleCol = root.collection('stakeholders');
+    const productsCol = root.collection('products');
 
     // одна запись за раз на документ
     const chains = new Map<string, Promise<void>>();
@@ -52,7 +56,7 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
 
     return {
         kind: 'cloud',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders) {
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts) {
             const err = (e: {code?: string}) => onError(errorText(e?.code));
             const u1 = tasksCol.onSnapshot((s: any) => onTasks(s.docs.map((d: any) => d.data() as Task)), err);
             const u2 = tagsCol.onSnapshot((s: any) => onTags(s.docs.map((d: any) => d.data() as Tag)), err);
@@ -61,11 +65,13 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
                 (s: any) => onStakeholders(s.docs.map((d: any) => d.data() as StakeholderMap)),
                 err,
             );
+            const u5 = productsCol.onSnapshot((s: any) => onProducts(s.docs.map((d: any) => d.data() as Product)), err);
             return () => {
                 u1();
                 u2();
                 u3();
                 u4();
+                u5();
             };
         },
         saveTask: (t) => queue('t:' + t.id, () => tasksCol.doc(t.id).set({...t})),
@@ -76,11 +82,14 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
         removeRoadmap: (id) => queue('r:' + id, () => mapsCol.doc(id).delete()),
         saveStakeholderMap: (m) => queue('s:' + m.id, () => peopleCol.doc(m.id).set({...m})),
         removeStakeholderMap: (id) => queue('s:' + id, () => peopleCol.doc(id).delete()),
-        async importAll(tasks, tags, roadmaps, stakeholders) {
+        saveProduct: (p) => queue('p:' + p.id, () => productsCol.doc(p.id).set({...p})),
+        removeProduct: (id) => queue('p:' + id, () => productsCol.doc(id).delete()),
+        async importAll(tasks, tags, roadmaps, stakeholders, products) {
             for (const t of tags) await queue('g:' + t.id, () => tagsCol.doc(t.id).set({...t}));
             for (const t of tasks) await queue('t:' + t.id, () => tasksCol.doc(t.id).set({...t}));
             for (const r of roadmaps) await queue('r:' + r.id, () => mapsCol.doc(r.id).set({...r}));
             for (const m of stakeholders) await queue('s:' + m.id, () => peopleCol.doc(m.id).set({...m}));
+            for (const p of products) await queue('p:' + p.id, () => productsCol.doc(p.id).set({...p}));
         },
     };
 }
@@ -123,11 +132,12 @@ function errorText(code?: string) {
 const LS_KEY = 'muravey:v1';
 
 function localBackend(): Backend {
-    let state: {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]} = {
+    let state: {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]; products: Product[]} = {
         tasks: [],
         tags: [],
         roadmaps: [],
         stakeholders: [],
+        products: [],
     };
     try {
         const raw = localStorage.getItem(LS_KEY);
@@ -141,6 +151,7 @@ function localBackend(): Backend {
         onError: (m: string) => void;
         onRoadmaps: (r: Roadmap[]) => void;
         onStakeholders: (m: StakeholderMap[]) => void;
+        onProducts: (p: Product[]) => void;
     }>();
     const commit = async () => {
         try {
@@ -155,6 +166,7 @@ function localBackend(): Backend {
             s.onTags(state.tags);
             s.onRoadmaps(state.roadmaps);
             s.onStakeholders(state.stakeholders);
+            s.onProducts(state.products);
         });
     };
     const upsert = <T extends {id: string}>(arr: T[], item: T) => {
@@ -163,13 +175,14 @@ function localBackend(): Backend {
     };
     return {
         kind: 'local',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders) {
-            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders};
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts) {
+            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts};
             subs.add(s);
             onTasks(state.tasks);
             onTags(state.tags);
             onRoadmaps(state.roadmaps);
             onStakeholders(state.stakeholders);
+            onProducts(state.products);
             return () => subs.delete(s);
         },
         async saveTask(t) {
@@ -204,12 +217,21 @@ function localBackend(): Backend {
             state = {...state, stakeholders: state.stakeholders.filter((x) => x.id !== id)};
             await commit();
         },
-        async importAll(tasks, tags, roadmaps, stakeholders) {
+        async saveProduct(p) {
+            state = {...state, products: upsert(state.products, p)};
+            await commit();
+        },
+        async removeProduct(id) {
+            state = {...state, products: state.products.filter((x) => x.id !== id)};
+            await commit();
+        },
+        async importAll(tasks, tags, roadmaps, stakeholders, products) {
             state = {
                 tasks: tasks.reduce(upsert, state.tasks),
                 tags: tags.reduce(upsert, state.tags),
                 roadmaps: roadmaps.reduce(upsert, state.roadmaps),
                 stakeholders: stakeholders.reduce(upsert, state.stakeholders),
+                products: products.reduce(upsert, state.products),
             };
             await commit();
         },
@@ -252,9 +274,9 @@ const forget = () => {
 
 function serverBackend(initialToken: string): Backend {
     let token = initialToken;
-    type State = {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]};
-    // сервер до дорожных карт присылал только задачи и теги, до стейкхолдеров — без них
-    const full = (s: Partial<State>): State => ({tasks: [], tags: [], roadmaps: [], stakeholders: [], ...s});
+    type State = {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]; products: Product[]};
+    // старые серверы могут не присылать сущности, добавленные позже
+    const full = (s: Partial<State>): State => ({tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...s});
     let state: State = full({});
     try {
         const raw = localStorage.getItem(CACHE_KEY);
@@ -268,6 +290,7 @@ function serverBackend(initialToken: string): Backend {
         onError: (m: string) => void;
         onRoadmaps: (r: Roadmap[]) => void;
         onStakeholders: (m: StakeholderMap[]) => void;
+        onProducts: (p: Product[]) => void;
     }>();
     const emit = () => {
         try {
@@ -280,6 +303,7 @@ function serverBackend(initialToken: string): Backend {
             s.onTags(state.tags);
             s.onRoadmaps(state.roadmaps);
             s.onStakeholders(state.stakeholders);
+            s.onProducts(state.products);
         });
     };
     const fail = (e: {status?: number}) => {
@@ -341,13 +365,14 @@ function serverBackend(initialToken: string): Backend {
 
     return {
         kind: 'server',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders) {
-            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders};
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts) {
+            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts};
             subs.add(s);
             onTasks(state.tasks);
             onTags(state.tags);
             onRoadmaps(state.roadmaps);
             onStakeholders(state.stakeholders);
+            onProducts(state.products);
             refresh();
             const id = window.setInterval(refresh, POLL_MS);
             const onVis = () => document.visibilityState === 'visible' && refresh();
@@ -375,6 +400,9 @@ function serverBackend(initialToken: string): Backend {
                 ...s,
                 stakeholders: s.stakeholders.filter((x) => x.id !== id),
             })),
+        saveProduct: (p) => send({action: 'saveProduct', item: p}, (s) => ({...s, products: upsert(s.products, p)})),
+        removeProduct: (id) =>
+            send({action: 'removeProduct', id}, (s) => ({...s, products: s.products.filter((x) => x.id !== id)})),
         // ключ ссылки придумывает сервер, поэтому здесь ничего не меняем заранее
         shareRoadmap: (id) => send({action: 'shareRoadmap', id}, (s) => s),
         unshareRoadmap: (id) =>
@@ -382,12 +410,13 @@ function serverBackend(initialToken: string): Backend {
                 ...s,
                 roadmaps: s.roadmaps.map((r) => (r.id === id ? {...r, shareId: null} : r)),
             })),
-        importAll: (tasks, tags, roadmaps, stakeholders) =>
-            send({action: 'import', tasks, tags, roadmaps, stakeholders}, (s) => ({
+        importAll: (tasks, tags, roadmaps, stakeholders, products) =>
+            send({action: 'import', tasks, tags, roadmaps, stakeholders, products}, (s) => ({
                 tasks: tasks.reduce(upsert, s.tasks),
                 tags: tags.reduce(upsert, s.tags),
                 roadmaps: roadmaps.reduce(upsert, s.roadmaps),
                 stakeholders: stakeholders.reduce(upsert, s.stakeholders),
+                products: products.reduce(upsert, s.products),
             })),
         async signOut() {
             forget();

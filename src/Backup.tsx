@@ -3,7 +3,7 @@ import {Button, Dialog, DropdownMenu, Icon} from '@gravity-ui/uikit';
 import {ArrowDownToLine, ArrowRightFromSquare, ArrowUpFromLine, Ellipsis} from '@gravity-ui/icons';
 
 import type {Backend} from './store';
-import type {Roadmap, StakeholderMap, Tag, Task} from './types';
+import type {Product, Roadmap, StakeholderMap, Tag, Task} from './types';
 import {dayKey} from './types';
 
 interface Parsed {
@@ -11,13 +11,20 @@ interface Parsed {
     tags: Tag[];
     roadmaps: Roadmap[];
     stakeholders: StakeholderMap[];
+    products: Product[];
     newTasks: number;
     newTags: number;
 }
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 
-function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]} {
+function parseBackup(text: string): {
+    tasks: Task[];
+    tags: Tag[];
+    roadmaps: Roadmap[];
+    stakeholders: StakeholderMap[];
+    products: Product[];
+} {
     let data: unknown;
     try {
         data = JSON.parse(text);
@@ -43,11 +50,17 @@ function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadm
         (m): m is StakeholderMap =>
             isObj(m) && typeof m.id === 'string' && typeof m.title === 'string' && Array.isArray(m.stakeholders),
     );
+    const rawProducts = Array.isArray(data.products) ? data.products : [];
+    const products = rawProducts.filter(
+        (product): product is Product =>
+            isObj(product) && typeof product.id === 'string' && typeof product.title === 'string' && Array.isArray(product.tasks),
+    );
     if (
         tasks.length !== data.tasks.length ||
         tags.length !== data.tags.length ||
         roadmaps.length !== rawMaps.length ||
-        stakeholders.length !== rawPeople.length
+        stakeholders.length !== rawPeople.length ||
+        products.length !== rawProducts.length
     ) {
         throw new Error('Часть записей в файле повреждена, загрузка отменена.');
     }
@@ -64,7 +77,7 @@ function parseBackup(text: string): {tasks: Task[]; tags: Tag[]; roadmaps: Roadm
         createdAt: new Date().toISOString(),
         ...t,
     }));
-    return {tasks: fixed, tags, roadmaps, stakeholders};
+    return {tasks: fixed, tags, roadmaps, stakeholders, products};
 }
 
 export function BackupMenu({
@@ -73,6 +86,7 @@ export function BackupMenu({
     tags,
     roadmaps,
     stakeholders,
+    products,
     onResult,
 }: {
     backend: Backend | null;
@@ -80,6 +94,7 @@ export function BackupMenu({
     tags: Tag[];
     roadmaps: Roadmap[];
     stakeholders: StakeholderMap[];
+    products: Product[];
     onResult: (r: {ok: boolean; message: string}) => void;
 }) {
     const fileRef = React.useRef<HTMLInputElement>(null);
@@ -88,7 +103,7 @@ export function BackupMenu({
 
     const download = () => {
         const body = JSON.stringify(
-            {version: 1, exportedAt: new Date().toISOString(), tasks, tags, roadmaps, stakeholders},
+            {version: 1, exportedAt: new Date().toISOString(), tasks, tags, roadmaps, stakeholders, products},
             null,
             2,
         );
@@ -121,13 +136,14 @@ export function BackupMenu({
         if (!pending || !backend) return;
         setBusy(true);
         try {
-            await backend.importAll(pending.tasks, pending.tags, pending.roadmaps, pending.stakeholders);
+            await backend.importAll(pending.tasks, pending.tags, pending.roadmaps, pending.stakeholders, pending.products);
             onResult({
                 ok: true,
                 message:
                     `Загружено: задач ${pending.tasks.length}, тегов ${pending.tags.length}` +
                     (pending.roadmaps.length ? `, дорожных карт ${pending.roadmaps.length}` : '') +
-                    (pending.stakeholders.length ? `, карт стейкхолдеров ${pending.stakeholders.length}.` : '.'),
+                    (pending.stakeholders.length ? `, карт стейкхолдеров ${pending.stakeholders.length}` : '') +
+                    (pending.products.length ? `, продуктов ${pending.products.length}.` : '.'),
             });
             setPending(null);
         } catch (e) {
@@ -188,10 +204,11 @@ export function BackupMenu({
                             {pending.tasks.length - pending.newTasks}), тегов: {pending.tags.length} (новых{' '}
                             {pending.newTags}, обновятся {pending.tags.length - pending.newTags})
                             {pending.roadmaps.length > 0 && `, дорожных карт: ${pending.roadmaps.length}`}
-                            {pending.stakeholders.length > 0 && `, карт стейкхолдеров: ${pending.stakeholders.length}`}.
+                            {pending.stakeholders.length > 0 && `, карт стейкхолдеров: ${pending.stakeholders.length}`}
+                            {pending.products.length > 0 && `, продуктов: ${pending.products.length}`}.
                             <br />
                             <br />
-                            Задачи и теги с теми же id перезапишутся версией из файла. Всё остальное останется как есть,
+                            Записи с теми же id перезапишутся версией из файла. Всё остальное останется как есть,
                             ничего не удалится.
                         </>
                     )}
