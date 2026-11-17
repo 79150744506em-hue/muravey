@@ -486,9 +486,11 @@ export function App() {
     const completedToday = all.filter((t) => t.done && t.doneAt && dayKey(new Date(t.doneAt)) === today);
     const lists = {
         today: [
-            ...byList('today'),
-            ...completedToday.filter((t) => matches(t) && effectiveList(t, today) === 'today'),
-        ].sort((a, b) => sortKey(a, 'today') - sortKey(b, 'today')),
+            ...byList('today').sort((a, b) => sortKey(a, 'today') - sortKey(b, 'today')),
+            ...completedToday
+                .filter((t) => matches(t) && effectiveList(t, today) !== 'focus')
+                .sort((a, b) => (a.doneAt ?? '').localeCompare(b.doneAt ?? '')),
+        ],
         focus: byList('focus').sort((a, b) => sortKey(a, 'focus') - sortKey(b, 'focus')),
         backlog: byList('backlog').sort((a, b) => sortKey(a, 'backlog') - sortKey(b, 'backlog')),
         done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
