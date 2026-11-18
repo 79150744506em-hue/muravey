@@ -82,7 +82,8 @@ export function ReleaseNotes({ready}: {ready: boolean}) {
                     </section>
 
                     <p className="mv-release__signature">
-                        Спасибо, что пользуетесь Муравьём, друзья. С уважением, Егор
+                        Спасибо, что пользуетесь Муравьём, друзья.
+                        <span className="mv-release__signature-name">С уважением, Егор</span>
                     </p>
                 </div>
             </Dialog.Body>
