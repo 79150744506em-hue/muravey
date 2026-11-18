@@ -2,6 +2,7 @@
 // Данные лежат в Object Storage:
 //   accounts/<sha256 почты>.json — аккаунт {id, email, pass?, google?}
 //   users/<id>/state.json        — задачи, теги, дорожные карты, стейкхолдеры и продукты {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: []}
+//   users/<id>/backups/<n>.json  — 20 последних состояний до изменений, по кругу
 //   shares/<ключ>.json           — публичная ссылка на дорожную карту {u: id пользователя, r: id карты}
 const crypto = require('node:crypto');
 
@@ -95,7 +96,32 @@ async function deleteKey(iam, key) {
 const normEmail = (email) => String(email || '').trim().toLowerCase();
 const accountKey = (email) => `accounts/${crypto.createHash('sha256').update(email).digest('hex')}.json`;
 const stateKey = (uid) => `users/${uid}/state.json`;
+const BACKUP_COUNT = 20;
+const backupKey = (uid, slot) => `users/${uid}/backups/${slot}.json`;
 const shareKey = (id) => `shares/${id}.json`;
+
+const publicState = (state) => {
+    const {_backupCursor, ...data} = state;
+    return {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...data};
+};
+
+async function listBackups(uid, iam) {
+    const saved = await Promise.all(
+        Array.from({length: BACKUP_COUNT}, async (_, slot) => ({slot, data: await readJson(iam, backupKey(uid, slot))})),
+    );
+    return saved
+        .filter(({data}) => data && typeof data.savedAt === 'string' && data.state && Array.isArray(data.state.tasks))
+        .map(({slot, data}) => ({
+            slot,
+            savedAt: data.savedAt,
+            tasks: data.state.tasks.length,
+            tags: Array.isArray(data.state.tags) ? data.state.tags.length : 0,
+            roadmaps: Array.isArray(data.state.roadmaps) ? data.state.roadmaps.length : 0,
+            stakeholders: Array.isArray(data.state.stakeholders) ? data.state.stakeholders.length : 0,
+            products: Array.isArray(data.state.products) ? data.state.products.length : 0,
+        }))
+        .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+}
 
 /* ---------- вход через Google: проверяем id_token по открытым ключам Google ---------- */
 
@@ -215,14 +241,16 @@ async function handle(req, headers, iam) {
     const uid = readToken(auth.replace(/^Bearer\s+/i, ''));
     if (!uid) throw fail(401, 'unauthorized');
 
+    if (req.action === 'listBackups') return {backups: await listBackups(uid, iam)};
     return updateState(req, uid, iam);
 }
 
 async function updateState(req, uid, iam) {
     for (let attempt = 0; attempt < 4; attempt++) {
         const saved = await readJson(iam, stateKey(uid), true);
-        const state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...(saved.data || {})};
-        if (req.action === 'state') return {...state, token: issueToken(uid)};
+        let state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...(saved.data || {})};
+        const before = {...state};
+        if (req.action === 'state') return {...publicState(state), token: issueToken(uid)};
         const findMap = (id) => {
             const map = state.roadmaps.find((r) => r.id === id);
             if (!map) throw fail(404, 'not_found');
@@ -275,15 +303,39 @@ async function updateState(req, uid, iam) {
                     const map = findMap(req.id);
                     if (!map.shareId) {
                         createdShare = crypto.randomBytes(18).toString('base64url');
-                        map.shareId = createdShare;
                         await writeJson(iam, shareKey(createdShare), {u: uid, r: map.id});
+                        state.roadmaps = state.roadmaps.map((r) =>
+                            r.id === map.id ? {...r, shareId: createdShare} : r,
+                        );
                     }
                     break;
                 }
                 case 'unshareRoadmap': {
                     const map = findMap(req.id);
-                    if (map.shareId) removedShare = map.shareId;
-                    map.shareId = null;
+                    if (map.shareId) {
+                        removedShare = map.shareId;
+                        state.roadmaps = state.roadmaps.map((r) => (r.id === map.id ? {...r, shareId: null} : r));
+                    }
+                    break;
+                }
+                case 'restoreBackup': {
+                    const slot = Number(req.slot);
+                    if (!Number.isInteger(slot) || slot < 0 || slot >= BACKUP_COUNT) throw fail(400, 'bad_backup');
+                    const backup = await readJson(iam, backupKey(uid, slot));
+                    if (
+                        !backup?.state ||
+                        !['tasks', 'tags', 'roadmaps', 'stakeholders', 'products'].every((key) =>
+                            Array.isArray(backup.state[key]),
+                        )
+                    ) {
+                        throw fail(404, 'backup_not_found');
+                    }
+                    state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...backup.state};
+                    // публичная ссылка остаётся только у карты, для которой она сейчас активна
+                    state.roadmaps = state.roadmaps.map((r) => ({
+                        ...r,
+                        shareId: before.roadmaps.find((current) => current.id === r.id)?.shareId ?? null,
+                    }));
                     break;
                 }
                 case 'import':
@@ -299,6 +351,16 @@ async function updateState(req, uid, iam) {
                 default:
                     throw fail(400, 'unknown_action');
             }
+            if (saved.data !== null) {
+                const previousSlot = saved.data?._backupCursor;
+                const slot = Number.isInteger(previousSlot) ? (previousSlot + 1) % BACKUP_COUNT : 0;
+                await writeJson(iam, backupKey(uid, slot), {
+                    version: 1,
+                    savedAt: new Date().toISOString(),
+                    state: publicState(before),
+                });
+                state._backupCursor = slot;
+            }
             await writeJson(iam, stateKey(uid), state, saved.etag, saved.data === null);
         } catch (e) {
             if (createdShare) await deleteKey(iam, shareKey(createdShare)).catch(() => {});
@@ -306,7 +368,7 @@ async function updateState(req, uid, iam) {
             throw e;
         }
         if (removedShare) await deleteKey(iam, shareKey(removedShare));
-        return state;
+        return publicState(state);
     }
     throw fail(409, 'state_conflict');
 }

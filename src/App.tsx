@@ -52,6 +52,7 @@ import {AddListItem} from './AddListItem';
 import {DateField} from './DateField';
 import {TaskPicker} from './TaskPicker';
 import {BackupMenu} from './Backup';
+import {ReleaseNotes} from './ReleaseNotes';
 import {BacklogBoard} from './BacklogBoard';
 import {DescriptionEditor} from './DescriptionEditor';
 import {RoadmapsView, datesText} from './Roadmaps';
@@ -106,6 +107,7 @@ export function App() {
     const [tasks, setTasks] = React.useState<Task[] | null>(null);
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
+    const [connectionLost, setConnectionLost] = React.useState(false);
     // в адресе: #today, #roadmap/<id карты>, #stakeholders/<id карты> или #products/<id продукта>
     const [view, setView] = React.useState<View>(() => {
         const h = window.location.hash.slice(1).split('/')[0];
@@ -178,7 +180,16 @@ export function App() {
             if (!alive) return;
             setLogin(null);
             setBackend(b);
-            unsub = b.subscribe(setTasks, setTags, setError, setRoadmaps, setPeopleMaps, setProducts);
+            setConnectionLost(false);
+            unsub = b.subscribe(
+                setTasks,
+                setTags,
+                setError,
+                setRoadmaps,
+                setPeopleMaps,
+                setProducts,
+                setConnectionLost,
+            );
         };
         pickBackend().then((r) => {
             if (!alive) return;
@@ -192,7 +203,10 @@ export function App() {
     }, []);
 
     const run = React.useCallback((p: Promise<void>) => {
-        p.catch((e: Error) => setError(e.message));
+        p.catch((e: Error & {code?: string}) => {
+            if (e.code === 'connection_lost') setConnectionLost(true);
+            else setError(e.message);
+        });
     }, []);
 
     const patch = React.useCallback(
@@ -668,7 +682,11 @@ export function App() {
                         roadmaps={roadmaps ?? []}
                         stakeholders={peopleMaps ?? []}
                         products={products ?? []}
-                        onResult={(r) => (r.ok ? setNotice(r.message) : setError(r.message))}
+                        onResult={(r) => {
+                            if (r.ok) setNotice(r.message);
+                            else if (r.code === 'connection_lost') setConnectionLost(true);
+                            else setError(r.message);
+                        }}
                     />
                 </div>
             </header>
@@ -677,6 +695,12 @@ export function App() {
                 <TagFilter tags={sortedTags} value={activeFilter} onChange={setTagFilter} />
             )}
 
+            {connectionLost && (
+                <div className="mv-alert mv-connection" role="status" aria-live="polite">
+                    <Loader size="s" />
+                    <Text color="secondary">Соединение потеряно</Text>
+                </div>
+            )}
             {error && (
                 <Alert theme="danger" message={error} onClose={() => setError(null)} className="mv-alert" />
             )}
@@ -932,6 +956,8 @@ export function App() {
                 onSave={(t) => backend && run(backend.saveTag(t))}
                 onRemove={removeTag}
             />
+
+            <ReleaseNotes ready={Boolean(backend) && tasks !== null} />
 
             <ContactDialog
                 person={askedPerson?.s ?? null}

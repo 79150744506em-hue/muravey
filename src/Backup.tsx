@@ -1,8 +1,8 @@
 import React from 'react';
-import {Button, Dialog, DropdownMenu, Icon} from '@gravity-ui/uikit';
-import {ArrowDownToLine, ArrowRightFromSquare, ArrowUpFromLine, Ellipsis} from '@gravity-ui/icons';
+import {Button, Dialog, DropdownMenu, Icon, Loader} from '@gravity-ui/uikit';
+import {ArrowDownToLine, ArrowRightFromSquare, ArrowUpFromLine, ArrowUturnCcwLeft, Ellipsis} from '@gravity-ui/icons';
 
-import type {Backend} from './store';
+import type {Backend, BackupSnapshot} from './store';
 import type {Product, Roadmap, StakeholderMap, Tag, Task} from './types';
 import {dayKey} from './types';
 
@@ -17,6 +17,13 @@ interface Parsed {
 }
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+const fmtBackup = new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+});
 
 function parseBackup(text: string): {
     tasks: Task[];
@@ -95,11 +102,16 @@ export function BackupMenu({
     roadmaps: Roadmap[];
     stakeholders: StakeholderMap[];
     products: Product[];
-    onResult: (r: {ok: boolean; message: string}) => void;
+    onResult: (r: {ok: boolean; message: string; code?: string}) => void;
 }) {
     const fileRef = React.useRef<HTMLInputElement>(null);
     const [pending, setPending] = React.useState<Parsed | null>(null);
     const [busy, setBusy] = React.useState(false);
+    const [historyOpen, setHistoryOpen] = React.useState(false);
+    const [historyBusy, setHistoryBusy] = React.useState(false);
+    const [snapshots, setSnapshots] = React.useState<BackupSnapshot[]>([]);
+    const [restoring, setRestoring] = React.useState<BackupSnapshot | null>(null);
+    const [restoreBusy, setRestoreBusy] = React.useState(false);
 
     const download = () => {
         const body = JSON.stringify(
@@ -153,6 +165,43 @@ export function BackupMenu({
         }
     };
 
+    const openHistory = async () => {
+        if (!backend?.listBackups) return;
+        setHistoryOpen(true);
+        setRestoring(null);
+        setHistoryBusy(true);
+        try {
+            setSnapshots(await backend.listBackups());
+        } catch (e) {
+            onResult({
+                ok: false,
+                message: 'Не получилось получить автоматические копии: ' + (e as Error).message,
+                code: (e as {code?: string}).code,
+            });
+        } finally {
+            setHistoryBusy(false);
+        }
+    };
+
+    const restore = async () => {
+        if (!restoring || !backend?.restoreBackup) return;
+        setRestoreBusy(true);
+        try {
+            await backend.restoreBackup(restoring.slot);
+            setHistoryOpen(false);
+            setRestoring(null);
+            onResult({ok: true, message: 'Данные восстановлены из автоматической копии.'});
+        } catch (e) {
+            onResult({
+                ok: false,
+                message: 'Не получилось восстановить копию: ' + (e as Error).message,
+                code: (e as {code?: string}).code,
+            });
+        } finally {
+            setRestoreBusy(false);
+        }
+    };
+
     return (
         <>
             <DropdownMenu
@@ -167,6 +216,15 @@ export function BackupMenu({
                         iconStart: <Icon data={ArrowDownToLine} size={16} />,
                         action: download,
                     },
+                    ...(backend?.listBackups && backend.restoreBackup
+                        ? [
+                              {
+                                  text: 'Автоматические копии',
+                                  iconStart: <Icon data={ArrowUturnCcwLeft} size={16} />,
+                                  action: () => void openHistory(),
+                              },
+                          ]
+                        : []),
                     {
                         text: 'Загрузить из файла',
                         iconStart: <Icon data={ArrowUpFromLine} size={16} />,
@@ -220,6 +278,76 @@ export function BackupMenu({
                     onClickButtonApply={apply}
                     onClickButtonCancel={() => setPending(null)}
                 />
+            </Dialog>
+            <Dialog
+                open={historyOpen}
+                onClose={() => {
+                    if (restoreBusy) return;
+                    if (restoring) setRestoring(null);
+                    else setHistoryOpen(false);
+                }}
+                size="m"
+            >
+                <Dialog.Header caption={restoring ? 'Восстановить эту копию?' : 'Автоматические копии'} />
+                <Dialog.Body>
+                    {restoring ? (
+                        <>
+                            Текущие данные заменятся копией от{' '}
+                            <strong>{fmtBackup.format(new Date(restoring.savedAt))}</strong>: задач {restoring.tasks},
+                            тегов {restoring.tags}, дорожных карт {restoring.roadmaps}, карт стейкхолдеров{' '}
+                            {restoring.stakeholders}, продуктов {restoring.products}.
+                            <br />
+                            <br />
+                            Перед восстановлением сервер сохранит и текущее состояние, поэтому этот откат тоже можно
+                            будет отменить.
+                        </>
+                    ) : (
+                        <>
+                            <p className="mv-backup-history__hint">
+                                Перед каждым изменением сервер сохраняет предыдущее состояние. Выберите копию, чтобы
+                                восстановить задачи, теги, дорожные карты, стейкхолдеров и продукты вместе.
+                            </p>
+                            {historyBusy ? (
+                                <div className="mv-backup-history__loading">
+                                    <Loader size="m" />
+                                </div>
+                            ) : snapshots.length ? (
+                                <div className="mv-backup-list">
+                                    {snapshots.map((snapshot) => (
+                                        <button
+                                            type="button"
+                                            className="mv-backup-snapshot"
+                                            key={snapshot.slot}
+                                            onClick={() => setRestoring(snapshot)}
+                                        >
+                                            <span className="mv-backup-snapshot__date">
+                                                {fmtBackup.format(new Date(snapshot.savedAt))}
+                                            </span>
+                                            <span className="mv-backup-snapshot__counts">
+                                                Задач: {snapshot.tasks} · тегов: {snapshot.tags} · дорожных карт:{' '}
+                                                {snapshot.roadmaps} · карт стейкхолдеров: {snapshot.stakeholders} · продуктов:{' '}
+                                                {snapshot.products}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p>Автоматических копий пока нет. Первая появится перед следующим изменением данных.</p>
+                            )}
+                        </>
+                    )}
+                </Dialog.Body>
+                {restoring ? (
+                    <Dialog.Footer
+                        textButtonApply="Восстановить"
+                        textButtonCancel="Назад"
+                        loading={restoreBusy}
+                        onClickButtonApply={restore}
+                        onClickButtonCancel={() => !restoreBusy && setRestoring(null)}
+                    />
+                ) : (
+                    <Dialog.Footer textButtonCancel="Закрыть" onClickButtonCancel={() => setHistoryOpen(false)} />
+                )}
             </Dialog>
         </>
     );

@@ -1,5 +1,15 @@
 import type {Product, Roadmap, StakeholderMap, Tag, Task} from './types';
 
+export interface BackupSnapshot {
+    slot: number;
+    savedAt: string;
+    tasks: number;
+    tags: number;
+    roadmaps: number;
+    stakeholders: number;
+    products: number;
+}
+
 export interface Backend {
     kind: 'cloud' | 'local' | 'server';
     subscribe(
@@ -9,6 +19,7 @@ export interface Backend {
         onRoadmaps: (r: Roadmap[]) => void,
         onStakeholders: (m: StakeholderMap[]) => void,
         onProducts: (p: Product[]) => void,
+        onConnection: (lost: boolean) => void,
     ): () => void;
     saveTask(t: Task): Promise<void>;
     removeTask(id: string): Promise<void>;
@@ -25,6 +36,9 @@ export interface Backend {
     unshareRoadmap?(id: string): Promise<void>;
     /** Слить задачи, теги, дорожные карты, карты стейкхолдеров и продукты из резервной копии: совпадающие id перезаписываются, остальное не трогается. */
     importAll(tasks: Task[], tags: Tag[], roadmaps: Roadmap[], stakeholders: StakeholderMap[], products: Product[]): Promise<void>;
+    /** Автоматические копии на своём сервере и восстановление всего состояния из выбранной. */
+    listBackups?(): Promise<BackupSnapshot[]>;
+    restoreBackup?(slot: number): Promise<void>;
     /** выйти из аккаунта (есть только там, где есть вход) */
     signOut?(): Promise<void>;
 }
@@ -56,16 +70,35 @@ function cloudBackend(db: AnyDb, userId: string): Backend {
 
     return {
         kind: 'cloud',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts) {
-            const err = (e: {code?: string}) => onError(errorText(e?.code));
-            const u1 = tasksCol.onSnapshot((s: any) => onTasks(s.docs.map((d: any) => d.data() as Task)), err);
-            const u2 = tagsCol.onSnapshot((s: any) => onTags(s.docs.map((d: any) => d.data() as Tag)), err);
-            const u3 = mapsCol.onSnapshot((s: any) => onRoadmaps(s.docs.map((d: any) => d.data() as Roadmap)), err);
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection) {
+            const err = (e: {code?: string}) => {
+                if (e?.code === 'unavailable') onConnection(true);
+                else onError(errorText(e?.code));
+            };
+            const ready = () => onConnection(false);
+            const u1 = tasksCol.onSnapshot((s: any) => {
+                ready();
+                onTasks(s.docs.map((d: any) => d.data() as Task));
+            }, err);
+            const u2 = tagsCol.onSnapshot((s: any) => {
+                ready();
+                onTags(s.docs.map((d: any) => d.data() as Tag));
+            }, err);
+            const u3 = mapsCol.onSnapshot((s: any) => {
+                ready();
+                onRoadmaps(s.docs.map((d: any) => d.data() as Roadmap));
+            }, err);
             const u4 = peopleCol.onSnapshot(
-                (s: any) => onStakeholders(s.docs.map((d: any) => d.data() as StakeholderMap)),
+                (s: any) => {
+                    ready();
+                    onStakeholders(s.docs.map((d: any) => d.data() as StakeholderMap));
+                },
                 err,
             );
-            const u5 = productsCol.onSnapshot((s: any) => onProducts(s.docs.map((d: any) => d.data() as Product)), err);
+            const u5 = productsCol.onSnapshot((s: any) => {
+                ready();
+                onProducts(s.docs.map((d: any) => d.data() as Product));
+            }, err);
             return () => {
                 u1();
                 u2();
@@ -152,6 +185,7 @@ function localBackend(): Backend {
         onRoadmaps: (r: Roadmap[]) => void;
         onStakeholders: (m: StakeholderMap[]) => void;
         onProducts: (p: Product[]) => void;
+        onConnection: (lost: boolean) => void;
     }>();
     const commit = async () => {
         try {
@@ -175,9 +209,10 @@ function localBackend(): Backend {
     };
     return {
         kind: 'local',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts) {
-            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts};
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection) {
+            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection};
             subs.add(s);
+            onConnection(false);
             onTasks(state.tasks);
             onTags(state.tags);
             onRoadmaps(state.roadmaps);
@@ -291,6 +326,7 @@ function serverBackend(initialToken: string): Backend {
         onRoadmaps: (r: Roadmap[]) => void;
         onStakeholders: (m: StakeholderMap[]) => void;
         onProducts: (p: Product[]) => void;
+        onConnection: (lost: boolean) => void;
     }>();
     const emit = () => {
         try {
@@ -306,13 +342,16 @@ function serverBackend(initialToken: string): Backend {
             s.onProducts(state.products);
         });
     };
+    const reportConnection = (lost: boolean) => subs.forEach((s) => s.onConnection(lost));
     const fail = (e: {status?: number}) => {
         if (e?.status === 401) {
             forget();
             window.location.reload();
-            return 'Нужно войти заново.';
+            return Object.assign(new Error('Нужно войти заново.'), {code: 'unauthorized'});
         }
-        return 'Не получилось связаться с сервером. Проверьте интернет, изменения могут не сохраниться.';
+        return Object.assign(new Error('Соединение потеряно. Изменения могут не сохраниться.'), {
+            code: 'connection_lost',
+        });
     };
 
     // операции отправляются по очереди; пока очередь не пуста, опрос сервера не перетирает локальные правки
@@ -325,6 +364,7 @@ function serverBackend(initialToken: string): Backend {
         const p = chain.then(async () => {
             try {
                 const next = full(await api(body, token));
+                reportConnection(false);
                 if (pending === 1) {
                     state = next;
                     emit();
@@ -335,13 +375,17 @@ function serverBackend(initialToken: string): Backend {
         });
         chain = p.catch(() => {});
         return p.catch((e) => {
+            const error = fail(e as {status?: number});
+            if (error.code === 'connection_lost') reportConnection(true);
             // правка не записалась — сразу берём правду с сервера, чтобы откатить оптимистичное состояние
             void refresh();
-            throw new Error(fail(e));
+            throw error;
         });
     };
+    let refreshing = false;
     const refresh = async () => {
-        if (pending) return;
+        if (pending || refreshing) return;
+        refreshing = true;
         try {
             const {token: fresh, ...next} = (await api({action: 'state'}, token)) as State & {token?: string};
             // сервер продлевает ключ входа при каждом открытии
@@ -353,9 +397,13 @@ function serverBackend(initialToken: string): Backend {
                 state = full(next);
                 emit();
             }
+            reportConnection(false);
         } catch (e) {
-            const msg = fail(e as {status?: number});
-            subs.forEach((s) => s.onError(msg));
+            const error = fail(e as {status?: number});
+            if (error.code === 'connection_lost') reportConnection(true);
+            else subs.forEach((s) => s.onError(error.message));
+        } finally {
+            refreshing = false;
         }
     };
     const upsert = <T extends {id: string}>(arr: T[], item: T) => {
@@ -365,24 +413,28 @@ function serverBackend(initialToken: string): Backend {
 
     return {
         kind: 'server',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts) {
-            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts};
+        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection) {
+            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection};
             subs.add(s);
             onTasks(state.tasks);
             onTags(state.tags);
             onRoadmaps(state.roadmaps);
             onStakeholders(state.stakeholders);
             onProducts(state.products);
-            refresh();
+            void refresh();
             const id = window.setInterval(refresh, POLL_MS);
-            const onVis = () => document.visibilityState === 'visible' && refresh();
+            const onVis = () => {
+                if (document.visibilityState === 'visible') void refresh();
+            };
             document.addEventListener('visibilitychange', onVis);
             window.addEventListener('focus', refresh);
+            window.addEventListener('online', refresh);
             return () => {
                 subs.delete(s);
                 window.clearInterval(id);
                 document.removeEventListener('visibilitychange', onVis);
                 window.removeEventListener('focus', refresh);
+                window.removeEventListener('online', refresh);
             };
         },
         saveTask: (t) => send({action: 'saveTask', item: t}, (s) => ({...s, tasks: upsert(s.tasks, t)})),
@@ -418,6 +470,18 @@ function serverBackend(initialToken: string): Backend {
                 stakeholders: stakeholders.reduce(upsert, s.stakeholders),
                 products: products.reduce(upsert, s.products),
             })),
+        async listBackups() {
+            try {
+                const result = await api({action: 'listBackups'}, token);
+                reportConnection(false);
+                return Array.isArray(result.backups) ? (result.backups as BackupSnapshot[]) : [];
+            } catch (e) {
+                const error = fail(e as {status?: number});
+                if (error.code === 'connection_lost') reportConnection(true);
+                throw error;
+            }
+        },
+        restoreBackup: (slot) => send({action: 'restoreBackup', slot}, (s) => s),
         async signOut() {
             forget();
             window.location.reload();
