@@ -62,10 +62,11 @@ import {SaveStatus} from './SaveStatus';
 import {SortableList, useSortableRow} from './SortableList';
 import logo from './assets/logo.png';
 
-type View = ListKind | 'done' | 'roadmap' | 'stakeholders' | 'products';
+type View = 'tasks' | 'focus' | 'done' | 'roadmap' | 'stakeholders' | 'products';
 // вкладки со своими сущностями, а не со списками задач
 const isMapView = (v: View): v is 'roadmap' | 'stakeholders' | 'products' =>
     v === 'roadmap' || v === 'stakeholders' || v === 'products';
+const isListView = (v: View): v is 'focus' | 'done' => v === 'focus' || v === 'done';
 
 const LIST_NAMES: Record<ListKind, string> = {today: 'Сегодня', focus: 'Фокус', backlog: 'Бэклог'};
 const THEME_NAMES: Record<TagTheme, string> = {
@@ -108,13 +109,18 @@ export function App() {
     const [tags, setTags] = React.useState<Tag[]>([]);
     const [error, setError] = React.useState<string | null>(null);
     const [connectionLost, setConnectionLost] = React.useState(false);
-    // в адресе: #today, #roadmap/<id карты>, #stakeholders/<id карты> или #products/<id продукта>
+    // в адресе: #tasks, #roadmap/<id карты>, #stakeholders/<id карты> или #products/<id продукта>
     const [view, setView] = React.useState<View>(() => {
         const h = window.location.hash.slice(1).split('/')[0];
-        return (['today', 'focus', 'backlog', 'done', 'roadmap', 'stakeholders', 'products'] as View[]).includes(h as View)
+        if (h === 'today' || h === 'backlog') return 'tasks';
+        return (['tasks', 'focus', 'done', 'roadmap', 'stakeholders', 'products'] as View[]).includes(h as View)
             ? (h as View)
-            : 'today';
+            : 'tasks';
     });
+    React.useEffect(() => {
+        const h = window.location.hash.slice(1).split('/')[0];
+        if (h === 'today' || h === 'backlog') history.replaceState(null, '', '#tasks');
+    }, []);
     const [roadmaps, setRoadmaps] = React.useState<Roadmap[] | null>(null);
     const [peopleMaps, setPeopleMaps] = React.useState<StakeholderMap[] | null>(null);
     const [products, setProducts] = React.useState<Product[] | null>(null);
@@ -509,9 +515,7 @@ export function App() {
         backlog: byList('backlog').sort((a, b) => sortKey(a, 'backlog') - sortKey(b, 'backlog')),
         done: all.filter((t) => t.done && matches(t)).sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
     };
-    const shown = isMapView(view) ? [] : lists[view];
-    // на сегодня пусто (и фильтр ничего не прячет) — показываем большой экран «Спланировать день»
-    const emptyDay = view === 'today' && tasks !== null && lists.today.length === 0 && !filtering;
+    const shown = isListView(view) ? lists[view] : [];
     const tagMap = new Map(tags.map((t) => [t.id, t]));
     const sortedTags = [...tags].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     const cardId = openId ?? draft?.id ?? null;
@@ -568,7 +572,6 @@ export function App() {
             }),
         );
     };
-    const doneToday = completedToday.length;
     const visibleDoneToday = lists.today.filter((t) => t.done).length;
     const dayTotal = lists.today.length;
 
@@ -612,9 +615,14 @@ export function App() {
     );
 
     const tabs = [
-        {id: 'today', title: 'Сегодня', short: 'Сегодня', icon: Sun, counter: lists.today.length},
+        {
+            id: 'tasks',
+            title: 'Задачи',
+            short: 'Задачи',
+            icon: Tray,
+            counter: lists.today.length + lists.backlog.length,
+        },
         {id: 'focus', title: 'Фокус', short: 'Фокус', icon: Target, counter: lists.focus.length},
-        {id: 'backlog', title: 'Бэклог', short: 'Бэклог', icon: Tray, counter: lists.backlog.length},
         {id: 'products', title: 'Продукты', short: 'Продукты', icon: Cube, counter: products?.length},
         {id: 'done', title: 'Выполненные', short: 'Готово', icon: CircleCheck, counter: undefined},
         {id: 'roadmap', title: 'Roadmap', short: 'Roadmap', icon: BarsUnaligned, counter: undefined},
@@ -709,13 +717,13 @@ export function App() {
             )}
 
             <main className="mv-main">
-                {view === 'today' && tasks !== null && (
+                {view === 'tasks' && tasks !== null && (
                     <section className="mv-day" aria-labelledby="mv-day-title">
                         <div className="mv-day__heading">
                             <span className="mv-day__eyebrow">ШАГ ЗА ШАГОМ</span>
-                            <h2 id="mv-day-title">Сегодня</h2>
+                            <h2 id="mv-day-title">Задачи</h2>
                             <p title="Невыполненные задачи завтра вернутся в бэклог.">
-                                {filtering ? 'Задачи с выбранными тегами' : 'Самое важное — в пределах одного дня.'}
+                                {filtering ? 'Задачи с выбранными тегами' : 'План на сегодня и бэклог — в одном месте.'}
                             </p>
                         </div>
                         {dayTotal > 0 && (
@@ -794,7 +802,7 @@ export function App() {
                         onFeed={feedPerson}
                         undoable={undoable}
                     />
-                ) : view === 'backlog' && tasks !== null ? (
+                ) : view === 'tasks' && tasks !== null ? (
                     <BacklogBoard
                         backlog={lists.backlog}
                         today={lists.today}
@@ -809,20 +817,13 @@ export function App() {
                         <Loader size="m" />
                         <Text color="secondary">Загружаю задачи…</Text>
                     </div>
-                ) : emptyDay ? (
-                    <PlanHero
-                        hasBacklog={lists.backlog.length > 0}
-                        completed={doneToday > 0}
-                        disabled={!backend}
-                        onPlan={() => switchView('backlog')}
-                    />
-                ) : shown.length === 0 ? (
+                ) : !isListView(view) ? null : shown.length === 0 ? (
                     filtering ? (
                         <div className="mv-empty">
                             <Text color="secondary">Нет задач с выбранными тегами.</Text>
                         </div>
                     ) : (
-                        <EmptyState view={view} hasBacklog={lists.backlog.length > 0} />
+                        <EmptyState view={view} />
                     )
                 ) : (
                     <SortableList
@@ -833,9 +834,9 @@ export function App() {
                         {shown.map((t) => row(t, view !== 'done'))}
                     </SortableList>
                 )}
-                {(view === 'today' || view === 'focus') && tasks !== null && (
-                    <AddListItem onClick={() => openDraft(view)} disabled={!backend}>
-                        {view === 'focus' ? 'Добавить фокусную задачу' : 'Добавить задачу'}
+                {view === 'focus' && tasks !== null && (
+                    <AddListItem onClick={() => openDraft('focus')} disabled={!backend}>
+                        Добавить фокусную задачу
                     </AddListItem>
                 )}
             </main>
@@ -1315,67 +1316,9 @@ function TagFilter({tags, value, onChange}: {tags: Tag[]; value: string[]; onCha
     );
 }
 
-function PlanHero({hasBacklog, completed = false, disabled, onPlan}: {
-    hasBacklog: boolean;
-    completed?: boolean;
-    disabled: boolean;
-    onPlan: () => void;
-}) {
-    // муравей бросает кофе и убегает к бэклогу, потом переключаем вкладку
-    const [leaving, setLeaving] = React.useState(false);
-    const go = () => {
-        if (leaving) return;
-        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return onPlan();
-        setLeaving(true);
-        window.setTimeout(onPlan, 1100);
-    };
-    return (
-        <div className={`mv-hero${leaving ? ' mv-hero_leaving' : ''}`}>
-            <div className="mv-hero__scene" aria-hidden="true">
-                <img src={logo} alt="" className="mv-hero__ant" />
-                {/* утренний кофе: планируют обычно с утра */}
-                <svg className="mv-hero__coffee" viewBox="0 0 64 64">
-                    <g className="mv-steam">
-                        <path d="M24 20c-4-5 4-8 0-14" />
-                        <path d="M32 20c-4-5 4-8 0-14" />
-                        <path d="M40 20c-4-5 4-8 0-14" />
-                    </g>
-                    <path className="mv-mug__handle" d="M47 31h4a7 7 0 0 1 0 14h-5" />
-                    <path className="mv-mug__body" d="M15 26h33v17a12 12 0 0 1-12 12h-9a12 12 0 0 1-12-12z" />
-                    <ellipse className="mv-mug__coffee" cx="31.5" cy="27" rx="15" ry="3" />
-                    <path className="mv-mug__band" d="M15 36h33v4H15z" />
-                </svg>
-            </div>
-            <Text variant="header-1" as="h2" className="mv-hero__title">
-                {completed ? 'Можно выдохнуть' : 'Сегодня — чистый лист'}
-            </Text>
-            <Text color="secondary" className="mv-hero__text">
-                {completed
-                    ? 'На сегодня всё закрыто. Можно остановиться или выбрать следующий маленький шаг.'
-                    : hasBacklog
-                    ? 'Выберите в бэклоге, за что взяться сегодня. Остальное подождёт.'
-                    : 'Бэклог пока пуст: добавьте туда задачи и перетащите нужные в «Сегодня».'}
-            </Text>
-            <button
-                type="button"
-                className="mv-cta"
-                disabled={disabled}
-                onClick={go}
-            >
-                <Icon data={Sun} size={20} />
-                {completed ? 'Выбрать следующий шаг' : 'Спланировать день'}
-            </button>
-        </div>
-    );
-}
-
-function EmptyState({view, hasBacklog}: {view: Exclude<View, 'roadmap' | 'stakeholders' | 'products'>; hasBacklog: boolean}) {
-    const text: Record<Exclude<View, 'roadmap' | 'stakeholders' | 'products'>, string> = {
-        today: hasBacklog
-            ? 'На сегодня пока ничего. Возьмите задачи из бэклога.'
-            : 'На сегодня пока ничего. Добавьте задачи в бэклог, а потом запланируйте их сюда.',
+function EmptyState({view}: {view: 'focus' | 'done'}) {
+    const text = {
         focus: 'Фокусных задач нет. Добавьте ту, что должна быть всегда перед глазами.',
-        backlog: 'Бэклог пуст. Новые задачи появятся здесь.',
         done: 'Закрытых задач пока нет.',
     };
     return (
