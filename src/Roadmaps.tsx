@@ -51,6 +51,7 @@ import {
     MagnifierPlus,
     Pencil,
     Person,
+    PersonPlus,
     Plus,
     TrashBin,
     TriangleExclamation,
@@ -60,11 +61,12 @@ import {
 import {AddListItem} from './AddListItem';
 import {DateField} from './DateField';
 import {TaskPicker} from './TaskPicker';
-import type {Deadline, Epic, Milestone, Roadmap, RoadmapScale, Tag, Task} from './types';
+import type {Deadline, EntityAccess, EntityDocument, Epic, Milestone, Roadmap, RoadmapScale, Tag, Task} from './types';
 import {dayKey, uid} from './types';
 import {loadSharedRoadmap} from './store';
 import {DescriptionEditor} from './DescriptionEditor';
-import {SaveStatus, useAutosave} from './SaveStatus';
+import {SaveStatus, useAutosave, useRemoteText} from './SaveStatus';
+import {AccessBadge} from './Sharing';
 import MarkdownIt from 'markdown-it';
 import ins from 'markdown-it-ins';
 import {exportRoadmap} from './exportXlsx';
@@ -1099,6 +1101,9 @@ export type RoadmapsProps = {
     onOpenMilestone: (id: string | null) => void;
     canShare: boolean;
     disabled: boolean;
+    access: EntityAccess;
+    document?: EntityDocument;
+    onOpenShare?: () => void;
     onSave: (r: Roadmap) => Promise<void> | null;
     onRemove: (r: Roadmap) => void;
     onShare: (id: string) => void;
@@ -1216,7 +1221,7 @@ function milestonesWord(n: number) {
 }
 
 function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
-    const [title, setTitle] = React.useState(map.title);
+    const [title, setTitle, titleSync] = useRemoteText(map.title);
     const [settings, setSettings] = React.useState(false);
     const [sharing, setSharing] = React.useState(false);
     const [epicId, setEpicId] = React.useState<string | null>(null);
@@ -1228,7 +1233,8 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
     // правки накладываем на самую свежую версию карты: текст сохраняется с задержкой
     const mapRef = React.useRef(map);
     mapRef.current = map;
-    const saveMap = (patch: Partial<Roadmap>) => p.onSave({...mapRef.current, ...patch});
+    const readOnly = p.disabled || p.access === 'view';
+    const saveMap = (patch: Partial<Roadmap>) => (readOnly ? null : p.onSave({...mapRef.current, ...patch}));
     const auto = useAutosave<Roadmap>(saveMap);
     const patchMilestone = (id: string, patch: Partial<Milestone>) =>
         saveMap({milestones: mapRef.current.milestones.map((x) => (x.id === id ? {...x, ...patch} : x))});
@@ -1237,6 +1243,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
     const patchDeadline = (id: string, patch: Partial<Deadline>) =>
         saveMap({deadlines: (mapRef.current.deadlines ?? []).map((x) => (x.id === id ? {...x, ...patch} : x))});
     const addMilestone = () => {
+        if (readOnly) return;
         const rs = monthStart(map.from);
         const re = monthEnd(map.to);
         const len = map.scale === 'weeks' ? 6 : map.scale === 'months' ? 29 : 89;
@@ -1246,6 +1253,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.onOpenMilestone(m.id);
     };
     const duplicateMilestone = (m: Milestone) => {
+        if (readOnly) return;
         const current = mapRef.current;
         const index = current.milestones.findIndex((x) => x.id === m.id);
         const source = index >= 0 ? current.milestones[index]! : m;
@@ -1261,6 +1269,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.onOpenMilestone(copy.id);
     };
     const moveMilestone = (id: string, epicId: string | null) => {
+        if (readOnly) return;
         const milestone = mapRef.current.milestones.find((m) => m.id === id);
         if (!milestone || (milestone.epicId ?? null) === epicId) return;
         const previous = milestone.epicId ?? null;
@@ -1275,6 +1284,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         );
     };
     const moveEpic = (from: number, to: number) => {
+        if (readOnly) return;
         const current = mapRef.current.epics ?? [];
         if (from < 0 || to < 0 || from >= current.length || to >= current.length || from === to) return;
         const epics = [...current];
@@ -1285,16 +1295,19 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.undoable(`Эпик «${item.title}» перемещён`, () => auto.save({epics: current}));
     };
     const removeMilestone = (m: Milestone) => {
+        if (readOnly) return;
         p.onOpenMilestone(null);
         p.onSave({...map, milestones: map.milestones.filter((x) => x.id !== m.id)});
         p.undoable(`Веха «${m.title}» удалена`, () => p.onSave({...map}));
     };
     const addEpic = () => {
+        if (readOnly) return;
         const item: Epic = {id: uid(), title: 'Новый эпик'};
         p.onSave({...map, epics: [...(map.epics ?? []), item]});
         setEpicId(item.id);
     };
     const removeEpic = (item: Epic) => {
+        if (readOnly) return;
         setEpicId(null);
         p.onSave({
             ...map,
@@ -1304,6 +1317,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         p.undoable(`Эпик «${item.title}» удалён`, () => p.onSave({...map}));
     };
     const addDeadline = () => {
+        if (readOnly) return;
         const rs = monthStart(map.from);
         const re = monthEnd(map.to);
         const item: Deadline = {id: uid(), title: 'Новый дедлайн', date: fromDay(Math.min(Math.max(toDay(dayKey()), rs), re))};
@@ -1311,6 +1325,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
         setDeadlineId(item.id);
     };
     const removeDeadline = (item: Deadline) => {
+        if (readOnly) return;
         setDeadlineId(null);
         p.onSave({...map, deadlines: (map.deadlines ?? []).filter((x) => x.id !== item.id)});
         p.undoable(`Дедлайн «${item.title}» удалён`, () => p.onSave({...map}));
@@ -1325,16 +1340,24 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     Все карты
                 </Button>
                 <div className="mv-map__actions">
-                    {p.canShare && (
-                        <Button view={map.shareId ? 'outlined-info' : 'outlined'} size="m" onClick={() => setSharing(true)}>
-                            <Icon data={Globe} size={16} />
-                            Поделиться
+                    {p.document && p.onOpenShare && (
+                        <Button view="outlined" size="m" onClick={p.onOpenShare}>
+                            <Icon data={PersonPlus} size={16} />
+                            Доступ
                         </Button>
                     )}
                     <DropdownMenu
                         size="m"
                         items={[
-                            {text: 'Настройки', iconStart: <Icon data={Gear} size={16} />, action: () => setSettings(true)},
+                            ...(!readOnly
+                                ? [
+                                      {
+                                          text: 'Настройки',
+                                          iconStart: <Icon data={Gear} size={16} />,
+                                          action: () => setSettings(true),
+                                      },
+                                  ]
+                                : []),
                             {
                                 text: 'Скачать в Excel',
                                 iconStart: <Icon data={ArrowDownToLine} size={16} />,
@@ -1343,15 +1366,24 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                                         linked(m.id),
                                     ),
                             },
-                            {
-                                text: 'Удалить карту',
-                                theme: 'danger',
-                                iconStart: <Icon data={TrashBin} size={16} />,
-                                action: () => {
-                                    p.onOpenMap(null);
-                                    p.onRemove(map);
-                                },
-                            },
+                            ...(p.access === 'owner' && p.canShare
+                                ? [
+                                      {
+                                          text: map.shareId ? 'Публичная ссылка включена' : 'Публичная ссылка',
+                                          iconStart: <Icon data={Globe} size={16} />,
+                                          action: () => setSharing(true),
+                                      },
+                                      {
+                                          text: 'Удалить карту',
+                                          theme: 'danger' as const,
+                                          iconStart: <Icon data={TrashBin} size={16} />,
+                                          action: () => {
+                                              p.onOpenMap(null);
+                                              p.onRemove(map);
+                                          },
+                                      },
+                                  ]
+                                : []),
                         ]}
                     />
                 </div>
@@ -1361,14 +1393,17 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     view="clear"
                     size="xl"
                     className="mv-map__title"
+                    disabled={readOnly}
                     value={title}
                     onUpdate={(v) => {
                         setTitle(v);
                         if (v.trim()) auto.schedule({title: v.trim()});
                     }}
+                    onFocus={titleSync.onFocus}
                     onBlur={() => {
                         if (!title.trim()) setTitle(map.title);
                         auto.flush();
+                        titleSync.onBlur();
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                     aria-label="Название дорожной карты"
@@ -1377,6 +1412,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     <Text variant="body-1" color="secondary">
                         {SCALE_NAMES[map.scale]} · {periodText(map)} · {milestonesWord(map.milestones.length)}
                     </Text>
+                    <AccessBadge document={p.document} />
                     <SaveStatus state={auto.state} idle="" />
                 </div>
             </div>
@@ -1387,19 +1423,20 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
 
             <Gantt
                 roadmap={map}
+                readOnly={readOnly}
                 onChange={(m) =>
                     auto.save({milestones: mapRef.current.milestones.map((x) => (x.id === m.id ? m : x))})
                 }
-                onMoveToEpic={p.disabled ? undefined : moveMilestone}
-                onReorderEpics={p.disabled ? undefined : moveEpic}
+                onMoveToEpic={readOnly ? undefined : moveMilestone}
+                onReorderEpics={readOnly ? undefined : moveEpic}
                 onOpen={(id) => p.onOpenMilestone(id)}
-                onRename={p.disabled ? undefined : (id, value) => patchMilestone(id, {title: value})}
-                onDuplicate={p.disabled ? undefined : duplicateMilestone}
-                onAdd={p.disabled ? undefined : addMilestone}
+                onRename={readOnly ? undefined : (id, value) => patchMilestone(id, {title: value})}
+                onDuplicate={readOnly ? undefined : duplicateMilestone}
+                onAdd={readOnly ? undefined : addMilestone}
                 onOpenEpic={setEpicId}
-                onAddEpic={p.disabled ? undefined : addEpic}
+                onAddEpic={readOnly ? undefined : addEpic}
                 onOpenDeadline={setDeadlineId}
-                onAddDeadline={p.disabled ? undefined : addDeadline}
+                onAddDeadline={readOnly ? undefined : addDeadline}
                 meta={(m) => {
                     const ts = linked(m.id);
                     return milestoneMeta(
@@ -1422,6 +1459,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     onChange={(v) => auto.schedule({description: v})}
                     onSubmit={auto.flush}
                     placeholder="Цель карты, контекст, что считаем успехом"
+                    readOnly={readOnly}
                 />
             </section>
 
@@ -1449,6 +1487,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         onOpenTask={p.onOpenTask}
                         onLinkTask={p.onLinkTask}
                         onToggleTask={p.onToggleTask}
+                        disabled={readOnly}
                     />
                 )}
             </Dialog>
@@ -1462,6 +1501,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         onSave={(patch) => patchEpic(epic.id, patch)}
                         onDelete={() => removeEpic(epic)}
                         onClose={() => setEpicId(null)}
+                        disabled={readOnly}
                     />
                 )}
             </Dialog>
@@ -1481,6 +1521,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                         onSave={(patch) => patchDeadline(deadline.id, patch)}
                         onDelete={() => removeDeadline(deadline)}
                         onClose={() => setDeadlineId(null)}
+                        disabled={readOnly}
                     />
                 )}
             </Dialog>
@@ -1543,15 +1584,17 @@ function EpicDetails({
     onSave,
     onDelete,
     onClose,
+    disabled = false,
 }: {
     epic: Epic;
     count: number;
     onSave: (p: Partial<Epic>) => Promise<void> | null;
     onDelete: () => void;
     onClose: () => void;
+    disabled?: boolean;
 }) {
-    const [title, setTitle] = React.useState(epic.title);
-    const auto = useAutosave<Epic>(onSave);
+    const [title, setTitle, titleSync] = useRemoteText(epic.title);
+    const auto = useAutosave<Epic>((patch) => (disabled ? null : onSave(patch)));
     const close = () => {
         auto.flush();
         onClose();
@@ -1564,11 +1607,13 @@ function EpicDetails({
                 </Label>
                 <SaveStatus state={auto.state} idle={milestonesWord(count)} />
                 <div className="mv-details__actions">
-                    <ActionTooltip title="Удалить эпик">
-                        <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить эпик">
-                            <Icon data={TrashBin} size={16} />
-                        </Button>
-                    </ActionTooltip>
+                    {!disabled && (
+                        <ActionTooltip title="Удалить эпик">
+                            <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить эпик">
+                                <Icon data={TrashBin} size={16} />
+                            </Button>
+                        </ActionTooltip>
+                    )}
                 </div>
                 <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
                     <Icon data={Xmark} size={16} />
@@ -1578,14 +1623,17 @@ function EpicDetails({
                 view="clear"
                 size="xl"
                 className="mv-map__title"
+                disabled={disabled}
                 value={title}
                 onUpdate={(v) => {
                     setTitle(v);
                     if (v.trim()) auto.schedule({title: v.trim()});
                 }}
+                onFocus={titleSync.onFocus}
                 onBlur={() => {
                     if (!title.trim()) setTitle(epic.title);
                     auto.flush();
+                    titleSync.onBlur();
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                 placeholder="Название эпика"
@@ -1605,15 +1653,17 @@ function DeadlineDetails({
     onSave,
     onDelete,
     onClose,
+    disabled = false,
 }: {
     deadline: Deadline;
     scale: Pick<Roadmap, 'from' | 'to'>;
     onSave: (p: Partial<Deadline>) => Promise<void> | null;
     onDelete: () => void;
     onClose: () => void;
+    disabled?: boolean;
 }) {
-    const [title, setTitle] = React.useState(deadline.title);
-    const auto = useAutosave<Deadline>(onSave);
+    const [title, setTitle, titleSync] = useRemoteText(deadline.title);
+    const auto = useAutosave<Deadline>((patch) => (disabled ? null : onSave(patch)));
     const close = () => {
         auto.flush();
         onClose();
@@ -1626,11 +1676,13 @@ function DeadlineDetails({
                 </Label>
                 <SaveStatus state={auto.state} idle={datesText({start: deadline.date, end: deadline.date})} />
                 <div className="mv-details__actions">
-                    <ActionTooltip title="Удалить дедлайн">
-                        <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить дедлайн">
-                            <Icon data={TrashBin} size={16} />
-                        </Button>
-                    </ActionTooltip>
+                    {!disabled && (
+                        <ActionTooltip title="Удалить дедлайн">
+                            <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить дедлайн">
+                                <Icon data={TrashBin} size={16} />
+                            </Button>
+                        </ActionTooltip>
+                    )}
                 </div>
                 <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
                     <Icon data={Xmark} size={16} />
@@ -1640,14 +1692,17 @@ function DeadlineDetails({
                 view="clear"
                 size="xl"
                 className="mv-map__title"
+                disabled={disabled}
                 value={title}
                 onUpdate={(v) => {
                     setTitle(v);
                     if (v.trim()) auto.schedule({title: v.trim()});
                 }}
+                onFocus={titleSync.onFocus}
                 onBlur={() => {
                     if (!title.trim()) setTitle(deadline.title);
                     auto.flush();
+                    titleSync.onBlur();
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                 placeholder="Что должно быть готово"
@@ -1663,7 +1718,7 @@ function DeadlineDetails({
                         value={deadline.date}
                         min={fromDay(monthStart(scale.from))}
                         max={fromDay(monthEnd(scale.to))}
-                        onChange={(day) => auto.save({date: day})}
+                        onChange={(day) => !disabled && auto.save({date: day})}
                         ariaLabel="Дата дедлайна"
                     />
                 </div>
@@ -1756,6 +1811,7 @@ function MilestoneDetails({
     onOpenTask,
     onLinkTask,
     onToggleTask,
+    disabled = false,
 }: {
     milestone: Milestone;
     /** все вехи карты — для блокировок */
@@ -1774,12 +1830,13 @@ function MilestoneDetails({
     onOpenTask: (id: string) => void;
     onLinkTask: (taskId: string, milestoneId: string | null) => void;
     onToggleTask: (t: Task) => void;
+    disabled?: boolean;
 }) {
-    const [title, setTitle] = React.useState(milestone.title);
-    const [owner, setOwner] = React.useState(milestone.owner ?? '');
-    const [risk, setRisk] = React.useState(milestone.risk ?? '');
+    const [title, setTitle, titleSync] = useRemoteText(milestone.title);
+    const [owner, setOwner, ownerSync] = useRemoteText(milestone.owner ?? '');
+    const [risk, setRisk, riskSync] = useRemoteText(milestone.risk ?? '');
     const [recentColors, setRecentColors] = React.useState(loadRecentColors);
-    const auto = useAutosave<Milestone>(onSave);
+    const auto = useAutosave<Milestone>((patch) => (disabled ? null : onSave(patch)));
     React.useEffect(() => {
         try {
             localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(recentColors));
@@ -1788,6 +1845,7 @@ function MilestoneDetails({
         }
     }, [recentColors]);
     const chooseColor = (value: string) => {
+        if (disabled) return;
         const color = value.toLowerCase();
         auto.save({color});
         setRecentColors((current) => [color, ...current.filter((c) => c !== color)].slice(0, RECENT_COLORS_LIMIT));
@@ -1800,7 +1858,7 @@ function MilestoneDetails({
     const re = monthEnd(scale.to);
     const {lo, hi} = limits(milestone, all, rs, re);
     const setDate = (k: 'start' | 'end', v: string) => {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+        if (disabled || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
         // блокер не пускает начало раньше себя, а заблокированные — конец позже их начала
         const d = k === 'start' ? Math.max(toDay(v), lo) : Math.min(toDay(v), hi);
         const next = {start: milestone.start, end: milestone.end, [k]: fromDay(d)};
@@ -1817,10 +1875,11 @@ function MilestoneDetails({
     const loop = downstream(milestone, all);
     const candidates = all.filter((x) => x.id !== milestone.id && !milestone.blockedBy?.includes(x.id) && !loop.has(x.id));
     const addBlocker = (id: string) => {
+        if (disabled) return;
         const list = all.map((x) => (x.id === milestone.id ? {...x, blockedBy: [...blockers.map((b) => b.id), id]} : x));
         allAuto.save({list: pushLater(list, milestone.id, re)});
     };
-    const removeBlocker = (id: string) => auto.save({blockedBy: blockers.map((b) => b.id).filter((x) => x !== id)});
+    const removeBlocker = (id: string) => !disabled && auto.save({blockedBy: blockers.map((b) => b.id).filter((x) => x !== id)});
     const open = tasks.filter((t) => !t.done).length;
     const close = () => {
         auto.flush();
@@ -1835,11 +1894,13 @@ function MilestoneDetails({
                 </Label>
                 <SaveStatus state={status} idle={datesText(milestone)} />
                 <div className="mv-details__actions">
-                    <ActionTooltip title="Удалить веху">
-                        <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить веху">
-                            <Icon data={TrashBin} size={16} />
-                        </Button>
-                    </ActionTooltip>
+                    {!disabled && (
+                        <ActionTooltip title="Удалить веху">
+                            <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить веху">
+                                <Icon data={TrashBin} size={16} />
+                            </Button>
+                        </ActionTooltip>
+                    )}
                 </div>
                 <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
                     <Icon data={Xmark} size={16} />
@@ -1850,14 +1911,17 @@ function MilestoneDetails({
                 view="clear"
                 size="xl"
                 className="mv-map__title"
+                disabled={disabled}
                 value={title}
                 onUpdate={(v) => {
                     setTitle(v);
                     if (v.trim()) auto.schedule({title: v.trim()});
                 }}
+                onFocus={titleSync.onFocus}
                 onBlur={() => {
                     if (!title.trim()) setTitle(milestone.title);
                     auto.flush();
+                    titleSync.onBlur();
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                 placeholder="Название вехи"
@@ -1876,6 +1940,7 @@ function MilestoneDetails({
                             min={fromDay(lo)}
                             max={fromDay(re)}
                             onChange={(day) => setDate('start', day)}
+                            disabled={disabled}
                             ariaLabel="Дата начала вехи"
                         />
                     </div>
@@ -1888,6 +1953,7 @@ function MilestoneDetails({
                             min={fromDay(rs)}
                             max={fromDay(hi)}
                             onChange={(day) => setDate('end', day)}
+                            disabled={disabled}
                             ariaLabel="Дата окончания вехи"
                         />
                     </div>
@@ -1901,6 +1967,7 @@ function MilestoneDetails({
                         width="max"
                         value={[milestone.epicId ?? '']}
                         onUpdate={([v]) => auto.save({epicId: v || null})}
+                        disabled={disabled}
                         options={[
                             {value: '', content: 'Без эпика'},
                             ...epics.map((e) => ({value: e.id, content: e.title})),
@@ -1917,6 +1984,7 @@ function MilestoneDetails({
                         size="s"
                         view={milestone.color ? 'outlined' : 'action'}
                         onClick={() => auto.save({color: undefined})}
+                        disabled={disabled}
                     >
                         Авто
                     </Button>
@@ -1930,6 +1998,7 @@ function MilestoneDetails({
                                 className={`mv-color-picker__swatch${selected ? ' mv-color-picker__swatch_on' : ''}`}
                                 style={{background: color}}
                                 onClick={() => chooseColor(color)}
+                                disabled={disabled}
                                 aria-label={name}
                                 aria-pressed={selected}
                                 title={name}
@@ -1941,6 +2010,7 @@ function MilestoneDetails({
                             type="color"
                             value={milestone.color ?? recentColors[0] ?? '#3697f1'}
                             onChange={(e) => chooseColor(e.target.value)}
+                            disabled={disabled}
                             aria-label="Свой цвет полосы"
                         />
                         <span>Свой цвет</span>
@@ -1957,6 +2027,7 @@ function MilestoneDetails({
                     size="m"
                     value={milestone.status ?? 'work'}
                     onUpdate={(v) => auto.save({status: v === 'work' ? undefined : (v as Milestone['status'])})}
+                    disabled={disabled}
                     options={[
                         {value: 'work', content: 'В работе'},
                         {value: 'done', content: '✓ Готово'},
@@ -1973,7 +2044,12 @@ function MilestoneDetails({
                             setRisk(v);
                             auto.schedule({risk: v.trim()});
                         }}
-                        onBlur={auto.flush}
+                        onFocus={riskSync.onFocus}
+                        onBlur={() => {
+                            auto.flush();
+                            riskSync.onBlur();
+                        }}
+                        disabled={disabled}
                         placeholder="В чём риск и что с ним делаем"
                         aria-label="Описание риска"
                     />
@@ -1989,7 +2065,12 @@ function MilestoneDetails({
                         setOwner(v);
                         auto.schedule({owner: v.trim()});
                     }}
-                    onBlur={auto.flush}
+                    onFocus={ownerSync.onFocus}
+                    onBlur={() => {
+                        auto.flush();
+                        ownerSync.onBlur();
+                    }}
+                    disabled={disabled}
                     placeholder="Кто отвечает за веху"
                     aria-label="Ответственный"
                 />
@@ -2016,6 +2097,7 @@ function MilestoneDetails({
                                         view="flat-secondary"
                                         size="s"
                                         className="mv-subtask__unlink"
+                                        disabled={disabled}
                                         onClick={() => removeBlocker(b.id)}
                                         aria-label={`Снять блокировку «${b.title}»`}
                                     >
@@ -2030,7 +2112,7 @@ function MilestoneDetails({
                         Веху можно начать, только когда закончатся вехи, которые её блокируют. Раньше них её не перетащить.
                     </Text>
                 )}
-                {candidates.length > 0 && (
+                {candidates.length > 0 && !disabled && (
                     <div>
                         <Select
                             value={[]}
@@ -2072,6 +2154,7 @@ function MilestoneDetails({
                                     type="button"
                                     className={`mv-check mv-check_s${c.done ? ' mv-check_on' : ''}`}
                                     aria-label={c.done ? 'Вернуть в работу' : 'Закрыть задачу'}
+                                    disabled={disabled}
                                     onClick={() => onToggleTask(c)}
                                 >
                                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2086,6 +2169,7 @@ function MilestoneDetails({
                                         view="flat-secondary"
                                         size="s"
                                         className="mv-subtask__unlink"
+                                        disabled={disabled}
                                         onClick={() => onLinkTask(c.id, null)}
                                         aria-label={`Отвязать «${c.title}»`}
                                     >
@@ -2100,7 +2184,7 @@ function MilestoneDetails({
                         Привяжите задачи, которые ведут к этой вехе. Привязать можно и из карточки задачи, в поле «Веха».
                     </Text>
                 )}
-                {linkable.length > 0 && (
+                {linkable.length > 0 && !disabled && (
                     <div>
                         <TaskPicker
                             label="Привязать задачу"

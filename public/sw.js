@@ -16,6 +16,34 @@ self.addEventListener('activate', (e) => {
     );
 });
 
+self.addEventListener('push', (e) => {
+    const data = e.data ? e.data.json() : {};
+    e.waitUntil(
+        self.registration.showNotification(data.title || 'Муравей', {
+            body: data.body || 'Вам открыли доступ к документу.',
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
+            tag: data.tag || 'muravey-share',
+            data: {url: data.url || '/'},
+        }),
+    );
+});
+
+self.addEventListener('notificationclick', (e) => {
+    e.notification.close();
+    const target = new URL(e.notification.data?.url || '/', self.location.origin).href;
+    e.waitUntil(
+        clients.matchAll({type: 'window', includeUncontrolled: true}).then((list) => {
+            const client = list.find((item) => item.url.startsWith(self.location.origin));
+            if (client) {
+                if ('navigate' in client) return client.navigate(target).then((opened) => opened?.focus());
+                return client.focus();
+            }
+            return clients.openWindow(target);
+        }),
+    );
+});
+
 self.addEventListener('fetch', (e) => {
     const req = e.request;
     const url = new URL(req.url);

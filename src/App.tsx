@@ -47,7 +47,23 @@ import {pickBackend} from './store';
 import type {LoginOptions} from './store';
 import {burst} from './confetti';
 import {TAG_THEMES, dayKey, effectiveList, hungerOf, sortKey, uid} from './types';
-import type {ListKind, Milestone, Product, Roadmap, Stakeholder, StakeholderMap, Tag, TagTheme, Task} from './types';
+import type {
+    AppNotification,
+    CollaborationState,
+    EntityAccess,
+    EntityDocument,
+    EntityKind,
+    ListKind,
+    Milestone,
+    Product,
+    Roadmap,
+    Stakeholder,
+    StakeholderMap,
+    Tag,
+    TagTheme,
+    Task,
+} from './types';
+import {emptyCollaboration} from './types';
 import {AddListItem} from './AddListItem';
 import {DateField} from './DateField';
 import {TaskPicker} from './TaskPicker';
@@ -59,6 +75,8 @@ import {RoadmapsView, datesText} from './Roadmaps';
 import {ProductsView} from './Products';
 import {ContactDialog, DueChip, StakeholdersView, findPerson, zoneName} from './Stakeholders';
 import {SaveStatus} from './SaveStatus';
+import {ShareDialog} from './Sharing';
+import {NotificationCenter} from './Notifications';
 import {SortableList, useSortableRow} from './SortableList';
 import logo from './assets/logo.png';
 
@@ -124,6 +142,8 @@ export function App() {
     const [roadmaps, setRoadmaps] = React.useState<Roadmap[] | null>(null);
     const [peopleMaps, setPeopleMaps] = React.useState<StakeholderMap[] | null>(null);
     const [products, setProducts] = React.useState<Product[] | null>(null);
+    const [collaboration, setCollaboration] = React.useState<CollaborationState>(emptyCollaboration);
+    const [sharing, setSharing] = React.useState<{kind: EntityKind; id: string; title: string} | null>(null);
     // открытая карта или продукт, смотря какая вкладка
     const [mapId, setMapId] = React.useState<string | null>(() => {
         const [h, id] = window.location.hash.slice(1).split('/');
@@ -195,6 +215,7 @@ export function App() {
                 setPeopleMaps,
                 setProducts,
                 setConnectionLost,
+                setCollaboration,
             );
         };
         pickBackend().then((r) => {
@@ -429,30 +450,63 @@ export function App() {
         }
     };
 
+    const documentFor = React.useCallback(
+        (kind: EntityKind, id: string | null): EntityDocument | undefined =>
+            id ? Object.values(collaboration.documents).find((item) => item.kind === kind && item.id === id) : undefined,
+        [collaboration.documents],
+    );
+    const accessOf = React.useCallback(
+        (kind: EntityKind, id: string | null): EntityAccess => documentFor(kind, id)?.access ?? 'owner',
+        [documentFor],
+    );
+    const canEdit = React.useCallback(
+        (kind: EntityKind, id: string | null) => accessOf(kind, id) !== 'view',
+        [accessOf],
+    );
+    const requireEdit = React.useCallback(
+        (kind: EntityKind, id: string | null) => {
+            if (canEdit(kind, id)) return true;
+            setError('У вас доступ только на просмотр.');
+            return false;
+        },
+        [canEdit],
+    );
+    const openNotification = (item: AppNotification) => {
+        if (item.kind === 'product') switchView('products', item.entityId);
+        else if (item.kind === 'roadmap') switchView('roadmap', item.entityId);
+        else switchView('stakeholders', item.entityId);
+    };
+
     const removeRoadmap = (r: Roadmap) => {
-        if (!backend) return;
+        if (!backend || accessOf('roadmap', r.id) !== 'owner') return;
         run(backend.removeRoadmap(r.id));
         undoable(`Дорожная карта «${r.title}» удалена`, () => run(backend.saveRoadmap(r)));
     };
+    const saveRoadmap = (r: Roadmap) => {
+        if (!backend || !requireEdit('roadmap', r.id)) return null;
+        const pr = backend.saveRoadmap(r);
+        run(pr);
+        return pr;
+    };
     const removePeopleMap = (m: StakeholderMap) => {
-        if (!backend) return;
+        if (!backend || accessOf('stakeholderMap', m.id) !== 'owner') return;
         run(backend.removeStakeholderMap(m.id));
         undoable(`Карта «${m.title}» удалена`, () => run(backend.saveStakeholderMap(m)));
     };
     const savePeopleMap = (m: StakeholderMap) => {
-        if (!backend) return null;
+        if (!backend || !requireEdit('stakeholderMap', m.id)) return null;
         const pr = backend.saveStakeholderMap(m);
         run(pr);
         return pr;
     };
     const saveProduct = (product: Product) => {
-        if (!backend) return null;
+        if (!backend || !requireEdit('product', product.id)) return null;
         const pr = backend.saveProduct(product);
         run(pr);
         return pr;
     };
     const removeProduct = (product: Product) => {
-        if (!backend) return;
+        if (!backend || accessOf('product', product.id) !== 'owner') return;
         run(backend.removeProduct(product.id));
         undoable(`Продукт «${product.title}» удалён`, () => run(backend.saveProduct(product)));
     };
@@ -679,6 +733,9 @@ export function App() {
                     {fmtToday.format(new Date())}
                 </Text>
                 <div className="mv-header__actions">
+                    {backend?.setEntityAccess && (
+                        <NotificationCenter collaboration={collaboration} backend={backend} onOpen={openNotification} />
+                    )}
                     <Button view="outlined" size="m" onClick={() => setTagsOpen(true)} className="mv-tags-btn" title="Теги">
                         <Icon data={TagIcon} size={16} />
                         <span className="mv-hide-phone">Теги</span>
@@ -746,6 +803,19 @@ export function App() {
                         productId={mapId}
                         onOpenProduct={(id) => switchView('products', id)}
                         disabled={!backend}
+                        access={accessOf('product', mapId)}
+                        document={documentFor('product', mapId)}
+                        documents={collaboration.documents}
+                        onOpenShare={
+                            mapId
+                                ? () =>
+                                      setSharing({
+                                          kind: 'product',
+                                          id: mapId,
+                                          title: products?.find((item) => item.id === mapId)?.title ?? 'Продукт',
+                                      })
+                                : undefined
+                        }
                         onSave={saveProduct}
                         onRemove={removeProduct}
                         undoable={undoable}
@@ -761,12 +831,19 @@ export function App() {
                         onOpenMilestone={setMilestoneId}
                         canShare={Boolean(backend?.shareRoadmap)}
                         disabled={!backend}
-                        onSave={(r) => {
-                            if (!backend) return null;
-                            const pr = backend.saveRoadmap(r);
-                            run(pr);
-                            return pr;
-                        }}
+                        access={accessOf('roadmap', mapId)}
+                        document={documentFor('roadmap', mapId)}
+                        onOpenShare={
+                            mapId
+                                ? () =>
+                                      setSharing({
+                                          kind: 'roadmap',
+                                          id: mapId,
+                                          title: roadmaps?.find((item) => item.id === mapId)?.title ?? 'Дорожная карта',
+                                      })
+                                : undefined
+                        }
+                        onSave={saveRoadmap}
                         onRemove={removeRoadmap}
                         onShare={(id) => backend?.shareRoadmap && run(backend.shareRoadmap(id))}
                         onUnshare={(id) => backend?.unshareRoadmap && run(backend.unshareRoadmap(id))}
@@ -790,6 +867,18 @@ export function App() {
                         personId={personId}
                         onOpenPerson={setPersonId}
                         disabled={!backend}
+                        access={accessOf('stakeholderMap', mapId)}
+                        document={documentFor('stakeholderMap', mapId)}
+                        onOpenShare={
+                            mapId
+                                ? () =>
+                                      setSharing({
+                                          kind: 'stakeholderMap',
+                                          id: mapId,
+                                          title: peopleMaps?.find((item) => item.id === mapId)?.title ?? 'Карта стейкхолдеров',
+                                      })
+                                : undefined
+                        }
                         onSave={savePeopleMap}
                         onRemove={removePeopleMap}
                         onOpenTask={(id) => {
@@ -956,6 +1045,16 @@ export function App() {
                 usage={(id) => all.filter((t) => t.tagIds.includes(id)).length}
                 onSave={(t) => backend && run(backend.saveTag(t))}
                 onRemove={removeTag}
+            />
+
+            <ShareDialog
+                open={Boolean(sharing)}
+                onClose={() => setSharing(null)}
+                kind={sharing?.kind ?? 'product'}
+                id={sharing?.id ?? ''}
+                title={sharing?.title ?? ''}
+                document={sharing ? documentFor(sharing.kind, sharing.id) : undefined}
+                backend={backend}
             />
 
             <ReleaseNotes ready={Boolean(backend) && tasks !== null} />

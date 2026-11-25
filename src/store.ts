@@ -1,4 +1,5 @@
-import type {Product, Roadmap, StakeholderMap, Tag, Task} from './types';
+import type {CollaborationState, EntityKind, Product, Roadmap, SharedAccess, StakeholderMap, Tag, Task} from './types';
+import {createCollaborativeServerBackend} from './serverBackend';
 
 export interface BackupSnapshot {
     slot: number;
@@ -20,6 +21,7 @@ export interface Backend {
         onStakeholders: (m: StakeholderMap[]) => void,
         onProducts: (p: Product[]) => void,
         onConnection: (lost: boolean) => void,
+        onCollaboration?: (c: CollaborationState) => void,
     ): () => void;
     saveTask(t: Task): Promise<void>;
     removeTask(id: string): Promise<void>;
@@ -39,6 +41,12 @@ export interface Backend {
     /** Автоматические копии на своём сервере и восстановление всего состояния из выбранной. */
     listBackups?(): Promise<BackupSnapshot[]>;
     restoreBackup?(slot: number): Promise<void>;
+    setEntityAccess?(kind: EntityKind, id: string, ownerId: string, email: string, access: SharedAccess): Promise<void>;
+    removeEntityAccess?(kind: EntityKind, id: string, ownerId: string, userId: string): Promise<void>;
+    leaveEntity?(kind: EntityKind, id: string, ownerId: string): Promise<void>;
+    markNotificationsRead?(ids?: string[]): Promise<void>;
+    subscribePush?(subscription: PushSubscriptionJSON): Promise<void>;
+    unsubscribePush?(endpoint: string): Promise<void>;
     /** выйти из аккаунта (есть только там, где есть вход) */
     signOut?(): Promise<void>;
 }
@@ -277,7 +285,6 @@ function localBackend(): Backend {
 
 const TOKEN_KEY = 'muravey:token';
 const CACHE_KEY = 'muravey:server-cache';
-const POLL_MS = 30_000;
 
 async function api(body: Record<string, unknown>, token?: string) {
     const res = await fetch('/api', {
@@ -308,185 +315,7 @@ const forget = () => {
 };
 
 function serverBackend(initialToken: string): Backend {
-    let token = initialToken;
-    type State = {tasks: Task[]; tags: Tag[]; roadmaps: Roadmap[]; stakeholders: StakeholderMap[]; products: Product[]};
-    // старые серверы могут не присылать сущности, добавленные позже
-    const full = (s: Partial<State>): State => ({tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...s});
-    let state: State = full({});
-    try {
-        const raw = localStorage.getItem(CACHE_KEY);
-        if (raw) state = full(JSON.parse(raw));
-    } catch {
-        /* без кэша */
-    }
-    const subs = new Set<{
-        onTasks: (t: Task[]) => void;
-        onTags: (t: Tag[]) => void;
-        onError: (m: string) => void;
-        onRoadmaps: (r: Roadmap[]) => void;
-        onStakeholders: (m: StakeholderMap[]) => void;
-        onProducts: (p: Product[]) => void;
-        onConnection: (lost: boolean) => void;
-    }>();
-    const emit = () => {
-        try {
-            localStorage.setItem(CACHE_KEY, JSON.stringify(state));
-        } catch {
-            /* без кэша */
-        }
-        subs.forEach((s) => {
-            s.onTasks(state.tasks);
-            s.onTags(state.tags);
-            s.onRoadmaps(state.roadmaps);
-            s.onStakeholders(state.stakeholders);
-            s.onProducts(state.products);
-        });
-    };
-    const reportConnection = (lost: boolean) => subs.forEach((s) => s.onConnection(lost));
-    const fail = (e: {status?: number}) => {
-        if (e?.status === 401) {
-            forget();
-            window.location.reload();
-            return Object.assign(new Error('Нужно войти заново.'), {code: 'unauthorized'});
-        }
-        return Object.assign(new Error('Соединение потеряно. Изменения могут не сохраниться.'), {
-            code: 'connection_lost',
-        });
-    };
-
-    // операции отправляются по очереди; пока очередь не пуста, опрос сервера не перетирает локальные правки
-    let pending = 0;
-    let chain = Promise.resolve();
-    const send = (body: Record<string, unknown>, apply: (s: State) => State) => {
-        state = apply(state);
-        emit();
-        pending++;
-        const p = chain.then(async () => {
-            try {
-                const next = full(await api(body, token));
-                reportConnection(false);
-                if (pending === 1) {
-                    state = next;
-                    emit();
-                }
-            } finally {
-                pending--;
-            }
-        });
-        chain = p.catch(() => {});
-        return p.catch((e) => {
-            const error = fail(e as {status?: number});
-            if (error.code === 'connection_lost') reportConnection(true);
-            // правка не записалась — сразу берём правду с сервера, чтобы откатить оптимистичное состояние
-            void refresh();
-            throw error;
-        });
-    };
-    let refreshing = false;
-    const refresh = async () => {
-        if (pending || refreshing) return;
-        refreshing = true;
-        try {
-            const {token: fresh, ...next} = (await api({action: 'state'}, token)) as State & {token?: string};
-            // сервер продлевает ключ входа при каждом открытии
-            if (fresh) {
-                token = fresh;
-                saveToken(fresh);
-            }
-            if (!pending) {
-                state = full(next);
-                emit();
-            }
-            reportConnection(false);
-        } catch (e) {
-            const error = fail(e as {status?: number});
-            if (error.code === 'connection_lost') reportConnection(true);
-            else subs.forEach((s) => s.onError(error.message));
-        } finally {
-            refreshing = false;
-        }
-    };
-    const upsert = <T extends {id: string}>(arr: T[], item: T) => {
-        const i = arr.findIndex((x) => x.id === item.id);
-        return i === -1 ? [...arr, item] : arr.map((x) => (x.id === item.id ? item : x));
-    };
-
-    return {
-        kind: 'server',
-        subscribe(onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection) {
-            const s = {onTasks, onTags, onError, onRoadmaps, onStakeholders, onProducts, onConnection};
-            subs.add(s);
-            onTasks(state.tasks);
-            onTags(state.tags);
-            onRoadmaps(state.roadmaps);
-            onStakeholders(state.stakeholders);
-            onProducts(state.products);
-            void refresh();
-            const id = window.setInterval(refresh, POLL_MS);
-            const onVis = () => {
-                if (document.visibilityState === 'visible') void refresh();
-            };
-            document.addEventListener('visibilitychange', onVis);
-            window.addEventListener('focus', refresh);
-            window.addEventListener('online', refresh);
-            return () => {
-                subs.delete(s);
-                window.clearInterval(id);
-                document.removeEventListener('visibilitychange', onVis);
-                window.removeEventListener('focus', refresh);
-                window.removeEventListener('online', refresh);
-            };
-        },
-        saveTask: (t) => send({action: 'saveTask', item: t}, (s) => ({...s, tasks: upsert(s.tasks, t)})),
-        removeTask: (id) =>
-            send({action: 'removeTask', id}, (s) => ({...s, tasks: s.tasks.filter((x) => x.id !== id)})),
-        saveTag: (t) => send({action: 'saveTag', item: t}, (s) => ({...s, tags: upsert(s.tags, t)})),
-        removeTag: (id) => send({action: 'removeTag', id}, (s) => ({...s, tags: s.tags.filter((x) => x.id !== id)})),
-        saveRoadmap: (r) => send({action: 'saveRoadmap', item: r}, (s) => ({...s, roadmaps: upsert(s.roadmaps, r)})),
-        removeRoadmap: (id) =>
-            send({action: 'removeRoadmap', id}, (s) => ({...s, roadmaps: s.roadmaps.filter((x) => x.id !== id)})),
-        saveStakeholderMap: (m) =>
-            send({action: 'saveStakeholderMap', item: m}, (s) => ({...s, stakeholders: upsert(s.stakeholders, m)})),
-        removeStakeholderMap: (id) =>
-            send({action: 'removeStakeholderMap', id}, (s) => ({
-                ...s,
-                stakeholders: s.stakeholders.filter((x) => x.id !== id),
-            })),
-        saveProduct: (p) => send({action: 'saveProduct', item: p}, (s) => ({...s, products: upsert(s.products, p)})),
-        removeProduct: (id) =>
-            send({action: 'removeProduct', id}, (s) => ({...s, products: s.products.filter((x) => x.id !== id)})),
-        // ключ ссылки придумывает сервер, поэтому здесь ничего не меняем заранее
-        shareRoadmap: (id) => send({action: 'shareRoadmap', id}, (s) => s),
-        unshareRoadmap: (id) =>
-            send({action: 'unshareRoadmap', id}, (s) => ({
-                ...s,
-                roadmaps: s.roadmaps.map((r) => (r.id === id ? {...r, shareId: null} : r)),
-            })),
-        importAll: (tasks, tags, roadmaps, stakeholders, products) =>
-            send({action: 'import', tasks, tags, roadmaps, stakeholders, products}, (s) => ({
-                tasks: tasks.reduce(upsert, s.tasks),
-                tags: tags.reduce(upsert, s.tags),
-                roadmaps: roadmaps.reduce(upsert, s.roadmaps),
-                stakeholders: stakeholders.reduce(upsert, s.stakeholders),
-                products: products.reduce(upsert, s.products),
-            })),
-        async listBackups() {
-            try {
-                const result = await api({action: 'listBackups'}, token);
-                reportConnection(false);
-                return Array.isArray(result.backups) ? (result.backups as BackupSnapshot[]) : [];
-            } catch (e) {
-                const error = fail(e as {status?: number});
-                if (error.code === 'connection_lost') reportConnection(true);
-                throw error;
-            }
-        },
-        restoreBackup: (slot) => send({action: 'restoreBackup', slot}, (s) => s),
-        async signOut() {
-            forget();
-            window.location.reload();
-        },
-    };
+    return createCollaborativeServerBackend(initialToken, {api, saveToken, forget, cacheKey: CACHE_KEY});
 }
 
 const NONCE_KEY = 'muravey:google-nonce';

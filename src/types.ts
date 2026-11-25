@@ -1,5 +1,56 @@
 export type ListKind = 'backlog' | 'today' | 'focus';
 
+export type EntityKind = 'product' | 'roadmap' | 'stakeholderMap';
+export type EntityAccess = 'owner' | 'edit' | 'view';
+export type SharedAccess = Exclude<EntityAccess, 'owner'>;
+
+export interface Collaborator {
+    userId: string;
+    email: string;
+    access: SharedAccess;
+    addedAt: string;
+}
+
+export interface EntityDocument {
+    key: string;
+    kind: EntityKind;
+    id: string;
+    ownerId: string;
+    ownerEmail: string;
+    access: EntityAccess;
+    revision: number;
+    members: Collaborator[];
+}
+
+export interface AppNotification {
+    id: string;
+    type: 'shared';
+    kind: EntityKind;
+    entityId: string;
+    ownerId: string;
+    ownerEmail: string;
+    title: string;
+    access: SharedAccess;
+    createdAt: string;
+    readAt: string | null;
+}
+
+export interface CollaborationState {
+    user: {id: string; email: string} | null;
+    documents: Record<string, EntityDocument>;
+    notifications: AppNotification[];
+    pushAvailable: boolean;
+    pushPublicKey: string | null;
+}
+
+export const emptyCollaboration: CollaborationState = {
+    user: null,
+    documents: {},
+    notifications: [],
+    pushAvailable: false,
+    pushPublicKey: null,
+};
+
 export type TagTheme = 'normal' | 'info' | 'success' | 'warning' | 'danger' | 'utility' | 'unknown';
 
 export interface Comment {

@@ -13,15 +13,27 @@ import {
     TextArea,
     TextInput,
 } from '@gravity-ui/uikit';
-import {ArrowLeft, Calendar, LinkSlash, Pencil, Persons, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
+import {ArrowLeft, Calendar, LinkSlash, Pencil, PersonPlus, Persons, Plus, TrashBin, Xmark} from '@gravity-ui/icons';
 
 import {AddListItem} from './AddListItem';
 import {DateField} from './DateField';
 import {TaskPicker} from './TaskPicker';
-import type {Attitude, ContactKind, Interaction, Outcome, Stakeholder, StakeholderMap, Tag, Task} from './types';
+import type {
+    Attitude,
+    ContactKind,
+    EntityAccess,
+    EntityDocument,
+    Interaction,
+    Outcome,
+    Stakeholder,
+    StakeholderMap,
+    Tag,
+    Task,
+} from './types';
 import {addDays, dayKey, openTasksOf, uid} from './types';
 import {DescriptionEditor} from './DescriptionEditor';
-import {SaveStatus, useAutosave} from './SaveStatus';
+import {SaveStatus, useAutosave, useRemoteText} from './SaveStatus';
+import {AccessBadge} from './Sharing';
 import logo from './assets/logo.png';
 
 /* ---------- справочники ---------- */
@@ -112,6 +124,9 @@ export type StakeholdersProps = {
     personId: string | null;
     onOpenPerson: (id: string | null) => void;
     disabled: boolean;
+    access: EntityAccess;
+    document?: EntityDocument;
+    onOpenShare?: () => void;
     onSave: (m: StakeholderMap) => Promise<void> | null;
     onRemove: (m: StakeholderMap) => void;
     onOpenTask: (id: string) => void;
@@ -265,12 +280,14 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
     // правки накладываем на самую свежую версию карты: текст сохраняется с задержкой
     const mapRef = React.useRef(map);
     mapRef.current = map;
-    const saveMap = (patch: Partial<StakeholderMap>) => p.onSave({...mapRef.current, ...patch});
+    const readOnly = p.disabled || p.access === 'view';
+    const saveMap = (patch: Partial<StakeholderMap>) => (readOnly ? null : p.onSave({...mapRef.current, ...patch}));
     const auto = useAutosave<StakeholderMap>(saveMap);
     const patchPerson = (id: string, patch: Partial<Stakeholder>) =>
         saveMap({stakeholders: mapRef.current.stakeholders.map((x) => (x.id === id ? {...x, ...patch} : x))});
 
     const add = () => {
+        if (readOnly) return;
         // новые встают чуть в стороне от центра, чтобы не ложиться друг на друга
         const n = map.stakeholders.length;
         const s: Stakeholder = {
@@ -285,6 +302,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
         p.onOpenPerson(s.id);
     };
     const remove = (s: Stakeholder) => {
+        if (readOnly) return;
         p.onOpenPerson(null);
         p.onSave({...map, stakeholders: map.stakeholders.filter((x) => x.id !== s.id)});
         p.undoable(`«${s.name || 'Стейкхолдер'}» удалён с карты`, () => p.onSave({...map}));
@@ -308,21 +326,37 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                     Все карты
                 </Button>
                 <div className="mv-map__actions">
-                    <DropdownMenu
-                        size="m"
-                        items={[
-                            {text: 'Переименовать', iconStart: <Icon data={Pencil} size={16} />, action: () => setRenaming(true)},
-                            {
-                                text: 'Удалить карту',
-                                theme: 'danger',
-                                iconStart: <Icon data={TrashBin} size={16} />,
-                                action: () => {
-                                    p.onOpenMap(null);
-                                    p.onRemove(map);
+                    {p.document && p.onOpenShare && (
+                        <Button view="outlined" size="m" onClick={p.onOpenShare}>
+                            <Icon data={PersonPlus} size={16} />
+                            Доступ
+                        </Button>
+                    )}
+                    {!readOnly && (
+                        <DropdownMenu
+                            size="m"
+                            items={[
+                                {
+                                    text: 'Переименовать',
+                                    iconStart: <Icon data={Pencil} size={16} />,
+                                    action: () => setRenaming(true),
                                 },
-                            },
-                        ]}
-                    />
+                                ...(p.access === 'owner'
+                                    ? [
+                                          {
+                                              text: 'Удалить карту',
+                                              theme: 'danger' as const,
+                                              iconStart: <Icon data={TrashBin} size={16} />,
+                                              action: () => {
+                                                  p.onOpenMap(null);
+                                                  p.onRemove(map);
+                                              },
+                                          },
+                                      ]
+                                    : []),
+                            ]}
+                        />
+                    )}
                 </div>
             </div>
             <div className="mv-map__titles">
@@ -334,6 +368,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                         {peopleWord(map.stakeholders.length)}
                         {hungryCount > 0 && ` · 🐒 ждут контакта: ${hungryCount}`}
                     </Text>
+                    <AccessBadge document={p.document} />
                     <SaveStatus state={auto.state} idle="" />
                 </div>
             </div>
@@ -341,6 +376,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
             <Matrix
                 people={map.stakeholders}
                 isHungry={hungry}
+                readOnly={readOnly}
                 onOpen={(id) => p.onOpenPerson(id)}
                 onMove={(id, pos) =>
                     auto.save({
@@ -384,7 +420,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                                         className="mv-hungry mv-hungry_button"
                                         title="Нет открытых задач. Покормите: запланируйте следующий контакт."
                                         onClick={() => setFeeding(s)}
-                                        disabled={p.disabled}
+                                        disabled={readOnly}
                                     >
                                         <span className="mv-hungry__monkey" aria-hidden="true">
                                             🐒
@@ -402,7 +438,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                     })}
                 </ul>
             )}
-            <AddListItem onClick={add} disabled={p.disabled}>
+            <AddListItem onClick={add} disabled={readOnly}>
                 Добавить стейкхолдера
             </AddListItem>
 
@@ -428,7 +464,7 @@ function MapPage({map, ...p}: StakeholdersProps & {map: StakeholderMap}) {
                         onLinkTask={p.onLinkTask}
                         onToggleTask={p.onToggleTask}
                         onFeed={() => setFeeding(person)}
-                        disabled={p.disabled}
+                        disabled={readOnly}
                     />
                 )}
             </Dialog>
@@ -467,11 +503,13 @@ function Matrix({
     isHungry,
     onOpen,
     onMove,
+    readOnly = false,
 }: {
     people: Stakeholder[];
     isHungry: (s: Stakeholder) => boolean;
     onOpen: (id: string) => void;
     onMove: (id: string, pos: Pick<Stakeholder, 'interest' | 'influence'>) => void;
+    readOnly?: boolean;
 }) {
     const box = React.useRef<HTMLDivElement>(null);
     // пока тянем, кружок двигается сам, а записываем место, только когда отпустили
@@ -484,6 +522,10 @@ function Matrix({
     };
     const down = (s: Stakeholder, e: React.PointerEvent) => {
         if (e.button !== 0) return;
+        if (readOnly) {
+            onOpen(s.id);
+            return;
+        }
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         start.current = {id: s.id, x: e.clientX, y: e.clientY, moved: false};
     };
@@ -508,6 +550,7 @@ function Matrix({
         }
     };
     const key = (s: Stakeholder, e: React.KeyboardEvent) => {
+        if (readOnly) return;
         const d = 0.05;
         const step: Record<string, [number, number]> = {ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, d], ArrowDown: [0, -d]};
         const v = step[e.key];
@@ -597,10 +640,10 @@ function PersonDetails({
     onFeed: () => void;
     disabled: boolean;
 }) {
-    const [name, setName] = React.useState(person.name);
-    const [role, setRole] = React.useState(person.role ?? '');
-    const [contact, setContact] = React.useState(person.contact ?? '');
-    const auto = useAutosave<Stakeholder>(onSave);
+    const [name, setName, nameSync] = useRemoteText(person.name);
+    const [role, setRole, roleSync] = useRemoteText(person.role ?? '');
+    const [contact, setContact, contactSync] = useRemoteText(person.contact ?? '');
+    const auto = useAutosave<Stakeholder>((patch) => (disabled ? null : onSave(patch)));
     const close = () => {
         auto.flush();
         onClose();
@@ -620,11 +663,13 @@ function PersonDetails({
                 </Label>
                 <SaveStatus state={auto.state} idle={zone.name} />
                 <div className="mv-details__actions">
-                    <ActionTooltip title="Удалить с карты">
-                        <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить стейкхолдера">
-                            <Icon data={TrashBin} size={16} />
-                        </Button>
-                    </ActionTooltip>
+                    {!disabled && (
+                        <ActionTooltip title="Удалить с карты">
+                            <Button view="flat-danger" size="m" onClick={onDelete} aria-label="Удалить стейкхолдера">
+                                <Icon data={TrashBin} size={16} />
+                            </Button>
+                        </ActionTooltip>
+                    )}
                 </div>
                 <Button view="flat" size="m" onClick={close} aria-label="Закрыть" className="mv-details__close">
                     <Icon data={Xmark} size={16} />
@@ -638,12 +683,17 @@ function PersonDetails({
                     size="xl"
                     className="mv-map__title"
                     autoFocus={!person.name}
+                    disabled={disabled}
                     value={name}
                     onUpdate={(v) => {
                         setName(v);
                         auto.schedule({name: v.trim()});
                     }}
-                    onBlur={auto.flush}
+                    onFocus={nameSync.onFocus}
+                    onBlur={() => {
+                        auto.flush();
+                        nameSync.onBlur();
+                    }}
                     onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                     placeholder="Имя и фамилия"
                     aria-label="Имя"
@@ -654,23 +704,33 @@ function PersonDetails({
                 <TextInput
                     size="m"
                     label="Роль"
+                    disabled={disabled}
                     value={role}
                     onUpdate={(v) => {
                         setRole(v);
                         auto.schedule({role: v.trim()});
                     }}
-                    onBlur={auto.flush}
+                    onFocus={roleSync.onFocus}
+                    onBlur={() => {
+                        auto.flush();
+                        roleSync.onBlur();
+                    }}
                     placeholder="CPO продукта «Оплаты»"
                 />
                 <TextInput
                     size="m"
                     label="Контакт"
+                    disabled={disabled}
                     value={contact}
                     onUpdate={(v) => {
                         setContact(v);
                         auto.schedule({contact: v.trim()});
                     }}
-                    onBlur={auto.flush}
+                    onFocus={contactSync.onFocus}
+                    onBlur={() => {
+                        auto.flush();
+                        contactSync.onBlur();
+                    }}
                     placeholder="Почта, телеграм"
                 />
             </div>
@@ -681,6 +741,7 @@ function PersonDetails({
                     size="m"
                     value={person.attitude ?? 'neutral'}
                     onUpdate={(v) => auto.save({attitude: v as Attitude})}
+                    disabled={disabled}
                     options={(Object.keys(ATTITUDES) as Attitude[]).map((a) => ({value: a, content: ATTITUDES[a]}))}
                 />
                 <Text variant="caption-2" color="secondary">
@@ -714,6 +775,7 @@ function PersonDetails({
                                     type="button"
                                     className={`mv-check mv-check_s${c.done ? ' mv-check_on' : ''}`}
                                     aria-label={c.done ? 'Вернуть в работу' : 'Закрыть задачу'}
+                                    disabled={disabled}
                                     onClick={() => onToggleTask(c)}
                                 >
                                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -729,6 +791,7 @@ function PersonDetails({
                                         view="flat-secondary"
                                         size="s"
                                         className="mv-subtask__unlink"
+                                        disabled={disabled}
                                         onClick={() => onLinkTask(c.id, null)}
                                         aria-label={`Отвязать «${c.title}»`}
                                     >
@@ -750,7 +813,7 @@ function PersonDetails({
                             Запланировать контакт
                         </Button>
                     )}
-                    {linkable.length > 0 && (
+                    {linkable.length > 0 && !disabled && (
                         <TaskPicker
                             label="Привязать задачу"
                             icon={Plus}
@@ -766,7 +829,7 @@ function PersonDetails({
                 <Text variant="subheader-1">
                     История взаимодействий{person.history.length ? ` · ${person.history.length}` : ''}
                 </Text>
-                <HistoryForm today={today} onAdd={(h) => auto.save({history: [...person.history, h]})} />
+                {!disabled && <HistoryForm today={today} onAdd={(h) => auto.save({history: [...person.history, h]})} />}
                 {history.length > 0 ? (
                     <ol className="mv-sh-history">
                         {history.map((h) => (
@@ -786,6 +849,7 @@ function PersonDetails({
                                         view="flat-secondary"
                                         size="s"
                                         className="mv-subtask__unlink"
+                                        disabled={disabled}
                                         onClick={() => auto.save({history: person.history.filter((x) => x.id !== h.id)})}
                                         aria-label="Удалить запись"
                                     >
@@ -810,6 +874,7 @@ function PersonDetails({
                     onChange={(v) => auto.schedule({description: v})}
                     onSubmit={auto.flush}
                     placeholder="Что важно этому человеку, чего он ждёт от продукта, о чём договорились"
+                    readOnly={disabled}
                 />
             </section>
         </div>

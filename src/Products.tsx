@@ -42,6 +42,7 @@ import {
     CopyPlus,
     Cube,
     Grip,
+    PersonPlus,
     Plus,
     TextAlignLeft,
     TrashBin,
@@ -49,8 +50,9 @@ import {
 } from '@gravity-ui/icons';
 
 import {DescriptionEditor} from './DescriptionEditor';
-import {SaveStatus, useAutosave} from './SaveStatus';
-import type {Product, ProductRoleId, ProductTask, ProductTaskStatus} from './types';
+import {SaveStatus, useAutosave, useRemoteText} from './SaveStatus';
+import {AccessBadge} from './Sharing';
+import type {EntityAccess, EntityDocument, Product, ProductRoleId, ProductTask, ProductTaskStatus} from './types';
 import {PRODUCT_ROLE_IDS, uid} from './types';
 import logo from './assets/logo.png';
 
@@ -140,6 +142,10 @@ type ProductsProps = {
     productId: string | null;
     onOpenProduct: (id: string | null) => void;
     disabled: boolean;
+    access: EntityAccess;
+    document?: EntityDocument;
+    documents: Record<string, EntityDocument>;
+    onOpenShare?: () => void;
     onSave: (product: Product) => Promise<void> | null;
     onRemove: (product: Product) => void;
     undoable: (title: string, undo: () => void) => void;
@@ -168,9 +174,14 @@ export function ProductsView(p: ProductsProps) {
 
     const sorted = [...p.products].sort(byProductOrder);
     const activeProduct = sorted.find((item) => item.id === activeProductId);
+    const canSort = sorted.every(
+        (item) =>
+            Object.values(p.documents).find((document) => document.kind === 'product' && document.id === item.id)?.access !==
+            'view',
+    );
     const onProductDragEnd = ({active, over}: DragEndEvent) => {
         setActiveProductId(null);
-        if (!over || active.id === over.id) return;
+        if (!canSort || !over || active.id === over.id) return;
         const from = sorted.findIndex((item) => item.id === String(active.id));
         const to = sorted.findIndex((item) => item.id === String(over.id));
         if (from < 0 || to < 0) return;
@@ -233,13 +244,13 @@ export function ProductsView(p: ProductsProps) {
                         },
                     }}
                 >
-                    <SortableContext items={sorted.map((item) => item.id)} strategy={rectSortingStrategy} disabled={p.disabled}>
+                    <SortableContext items={sorted.map((item) => item.id)} strategy={rectSortingStrategy} disabled={p.disabled || !canSort}>
                         <ul className="mv-products__grid">
                             {sorted.map((item) => (
                                 <SortableProductCard
                                     key={item.id}
                                     product={item}
-                                    disabled={p.disabled}
+                                    disabled={p.disabled || !canSort}
                                     onOpen={() => p.onOpenProduct(item.id)}
                                 />
                             ))}
@@ -331,7 +342,7 @@ function SortableProductCard({product, disabled, onOpen}: {product: Product; dis
 }
 
 function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
-    const [title, setTitle] = React.useState(product.title);
+    const [title, setTitle, titleSync] = useRemoteText(product.title);
     const [openTaskId, setOpenTaskId] = React.useState<string | null>(null);
     const [draft, setDraft] = React.useState<ProductTask | null>(null);
     const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
@@ -343,9 +354,11 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
     const productRef = React.useRef(product);
     productRef.current = product;
     const draftRef = React.useRef<ProductTask | null>(null);
-    const auto = useAutosave<Product>((patch) => p.onSave({...productRef.current, ...patch}));
+    const readOnly = p.disabled || p.access === 'view';
+    const auto = useAutosave<Product>((patch) => (readOnly ? null : p.onSave({...productRef.current, ...patch})));
 
     const patchTask = (id: string, patch: Partial<ProductTask>): Promise<void> | null => {
+        if (readOnly) return null;
         const stored = productRef.current.tasks.find((task) => task.id === id);
         const source = stored ?? (draftRef.current?.id === id ? draftRef.current : undefined);
         if (!source) return null;
@@ -363,6 +376,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
     };
 
     const addTask = () => {
+        if (readOnly) return;
         const task = newProductTask();
         draftRef.current = task;
         setDraft(task);
@@ -376,6 +390,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
     };
 
     const duplicateTask = (source: ProductTask) => {
+        if (readOnly) return;
         const current = productRef.current;
         const original = current.tasks.find((task) => task.id === source.id) ?? source;
         const copy: ProductTask = {
@@ -392,6 +407,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
     };
 
     const removeTask = (source: ProductTask) => {
+        if (readOnly) return;
         const current = productRef.current;
         const original = current.tasks.find((task) => task.id === source.id) ?? source;
         if (openTaskId === original.id) closeTask();
@@ -406,7 +422,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
 
     const onTaskDragEnd = ({active, over}: DragEndEvent) => {
         setActiveTaskId(null);
-        if (!over) return;
+        if (readOnly || !over) return;
         const current = productRef.current;
         const task = current.tasks.find((item) => item.id === String(active.id));
         if (!task) return;
@@ -450,25 +466,37 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                     <Icon data={ArrowLeft} size={16} />
                     Все продукты
                 </Button>
-                <DropdownMenu
-                    size="m"
-                    items={[
-                        {
-                            text: 'Добавить задачу',
-                            iconStart: <Icon data={Plus} size={16} />,
-                            action: addTask,
-                        },
-                        {
-                            text: 'Удалить продукт',
-                            theme: 'danger',
-                            iconStart: <Icon data={TrashBin} size={16} />,
-                            action: () => {
-                                p.onOpenProduct(null);
-                                p.onRemove(productRef.current);
+                {p.document && p.onOpenShare && (
+                    <Button view="outlined" size="m" onClick={p.onOpenShare}>
+                        <Icon data={PersonPlus} size={16} />
+                        Доступ
+                    </Button>
+                )}
+                {!readOnly && (
+                    <DropdownMenu
+                        size="m"
+                        items={[
+                            {
+                                text: 'Добавить задачу',
+                                iconStart: <Icon data={Plus} size={16} />,
+                                action: addTask,
                             },
-                        },
-                    ]}
-                />
+                            ...(p.access === 'owner'
+                                ? [
+                                      {
+                                          text: 'Удалить продукт',
+                                          theme: 'danger' as const,
+                                          iconStart: <Icon data={TrashBin} size={16} />,
+                                          action: () => {
+                                              p.onOpenProduct(null);
+                                              p.onRemove(productRef.current);
+                                          },
+                                      },
+                                  ]
+                                : []),
+                        ]}
+                    />
+                )}
             </div>
 
             <section className="mv-product__heading">
@@ -478,14 +506,17 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                         view="clear"
                         size="xl"
                         className="mv-map__title mv-product__title"
+                        disabled={readOnly}
                         value={title}
                         onUpdate={(value) => {
                             setTitle(value);
                             if (value.trim()) auto.schedule({title: value.trim()});
                         }}
+                        onFocus={titleSync.onFocus}
                         onBlur={() => {
                             if (!title.trim()) setTitle(product.title);
                             auto.flush();
+                            titleSync.onBlur();
                         }}
                         onKeyDown={(event) => event.key === 'Enter' && (event.target as HTMLInputElement).blur()}
                         aria-label="Название продукта"
@@ -495,6 +526,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                     <span><strong>{product.tasks.length}</strong> всего</span>
                     <span><strong>{inProgress}</strong> в работе</span>
                     <span><strong>{product.tasks.filter((task) => task.status === 'archive').length}</strong> в архиве</span>
+                    <AccessBadge document={p.document} />
                     <SaveStatus state={auto.state} idle="" />
                 </div>
             </section>
@@ -506,6 +538,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                     onChange={(description) => auto.schedule({description})}
                     onSubmit={auto.flush}
                     placeholder="Коротко о продукте, его целях и аудитории"
+                    readOnly={readOnly}
                 />
             </section>
 
@@ -518,7 +551,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                         </Text>
                     </div>
                     <div className="mv-product-backlog__actions">
-                        <Button view="action" onClick={addTask} disabled={p.disabled}>
+                        <Button view="action" onClick={addTask} disabled={readOnly}>
                             <Icon data={Plus} size={16} />
                             Добавить задачу
                         </Button>
@@ -543,7 +576,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                             <SortableContext
                                 items={sorted.map((task) => task.id)}
                                 strategy={verticalListSortingStrategy}
-                                disabled={p.disabled}
+                                disabled={readOnly}
                             >
                                 <table className="mv-product-table">
                                     <thead>
@@ -567,7 +600,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                                             status={group.status}
                                             tasks={group.tasks}
                                             dragging={Boolean(activeTask)}
-                                            disabled={p.disabled}
+                                            disabled={readOnly}
                                             onOpen={setOpenTaskId}
                                             onDuplicate={duplicateTask}
                                             onDelete={removeTask}
@@ -593,7 +626,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                         <Text color="secondary">
                             Заполните RICE-параметры и оценки команды — таблица сама построит приоритеты.
                         </Text>
-                        <Button view="outlined" onClick={addTask} disabled={p.disabled}>
+                        <Button view="outlined" onClick={addTask} disabled={readOnly}>
                             <Icon data={Plus} size={16} />
                             Создать задачу
                         </Button>
@@ -627,6 +660,7 @@ function ProductPage({product, ...p}: ProductsProps & {product: Product}) {
                         onClose={closeTask}
                         onDuplicate={() => duplicateTask(cardTask)}
                         onDelete={() => removeTask(cardTask)}
+                        disabled={readOnly}
                     />
                 )}
             </Dialog>
@@ -772,6 +806,7 @@ function ProductTaskDetails({
     onClose,
     onDuplicate,
     onDelete,
+    disabled = false,
 }: {
     task: ProductTask;
     isNew: boolean;
@@ -779,9 +814,10 @@ function ProductTaskDetails({
     onClose: () => void;
     onDuplicate: () => void;
     onDelete: () => void;
+    disabled?: boolean;
 }) {
-    const [title, setTitle] = React.useState(task.title);
-    const auto = useAutosave<ProductTask>(onPatch);
+    const [title, setTitle, titleSync] = useRemoteText(task.title);
+    const auto = useAutosave<ProductTask>((patch) => (disabled ? null : onPatch(patch)));
     const close = () => {
         auto.flush();
         onClose();
@@ -811,7 +847,7 @@ function ProductTaskDetails({
                     idle={isNew ? 'Сохранится после ввода названия' : `Создана ${dateFormat.format(new Date(task.createdAt))}`}
                 />
                 <div className="mv-details__actions">
-                    {!isNew && (
+                    {!isNew && !disabled && (
                         <>
                             <ActionTooltip title="Дублировать">
                                 <Button view="flat" size="m" onClick={onDuplicate} aria-label="Дублировать задачу">
@@ -837,14 +873,17 @@ function ProductTaskDetails({
                 minRows={1}
                 autoFocus={isNew}
                 className="mv-details__title"
+                disabled={disabled}
                 value={title}
                 onUpdate={(value) => {
                     setTitle(value);
                     if (value.trim()) auto.schedule({title: value.trim()});
                 }}
+                onFocus={titleSync.onFocus}
                 onBlur={() => {
                     if (!title.trim()) setTitle(task.title);
                     auto.flush();
+                    titleSync.onBlur();
                 }}
                 onKeyDown={(event) => {
                     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -862,6 +901,7 @@ function ProductTaskDetails({
                     value={[task.status]}
                     onUpdate={([status]) => auto.save({status: status as ProductTaskStatus})}
                     options={statusOptions}
+                    disabled={disabled}
                     aria-labelledby="mv-product-status-label"
                     width={240}
                 />
@@ -874,6 +914,7 @@ function ProductTaskDetails({
                     onChange={(description) => auto.schedule({description})}
                     onSubmit={close}
                     placeholder="Цель фичи, сценарий использования, критерии готовности"
+                    readOnly={disabled}
                 />
             </section>
 
@@ -903,6 +944,7 @@ function ProductTaskDetails({
                             controlProps={{min: 0, step: 1}}
                             value={String(task.reach)}
                             onUpdate={(value) => auto.save({reach: Math.max(0, Number(value) || 0)})}
+                            disabled={disabled}
                             aria-label="Reach"
                         />
                         <small>Сколько пользователей затронет фича</small>
@@ -917,6 +959,7 @@ function ProductTaskDetails({
                                 {value: '2', content: '2 — средний'},
                                 {value: '3', content: '3 — высокий'},
                             ]}
+                            disabled={disabled}
                             aria-label="Impact"
                         />
                         <small>Влияние на пользователя и продукт</small>
@@ -928,6 +971,7 @@ function ProductTaskDetails({
                             controlProps={{min: 0, max: 100, step: 1}}
                             value={String(task.confidence)}
                             onUpdate={(value) => auto.save({confidence: Math.min(100, Math.max(0, Number(value) || 0))})}
+                            disabled={disabled}
                             aria-label="Confidence в процентах"
                             endContent={<span className="mv-rice-field__percent">%</span>}
                         />
@@ -955,6 +999,7 @@ function ProductTaskDetails({
                                 <Checkbox
                                     checked={enabled}
                                     onUpdate={(checked) => setRole(id, checked)}
+                                    disabled={disabled}
                                     content={PRODUCT_ROLES[id]}
                                     aria-label={`Выбрать роль ${PRODUCT_ROLES[id]}`}
                                 />
@@ -963,7 +1008,7 @@ function ProductTaskDetails({
                                     controlProps={{min: 0, step: 0.5}}
                                     value={enabled && value != null ? String(value) : ''}
                                     onUpdate={(next) => setEstimate(id, next)}
-                                    disabled={!enabled}
+                                    disabled={!enabled || disabled}
                                     placeholder="Оценка"
                                     aria-label={`Оценка: ${PRODUCT_ROLES[id]}`}
                                 />

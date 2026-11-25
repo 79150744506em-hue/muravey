@@ -4,7 +4,10 @@
 //   users/<id>/state.json        — задачи, теги, дорожные карты, стейкхолдеры и продукты {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: []}
 //   users/<id>/backups/<n>.json  — 20 последних состояний до изменений, по кругу
 //   shares/<ключ>.json           — публичная ссылка на дорожную карту {u: id пользователя, r: id карты}
+//   entities/<владелец>/<тип>/<id>.json — общий CRDT-документ и участники
+//   users/<id>/sharing.json     — подписки на документы, уведомления и Web Push
 const crypto = require('node:crypto');
+const collaboration = require('./collaboration');
 
 const BUCKET = process.env.BUCKET;
 // Секрет для подписи ключей входа (секрет MURAVEY_PASSWORD в GitHub)
@@ -18,8 +21,8 @@ const TOKEN_TTL = 30 * 24 * 3600;
 const b64url = (buf) => Buffer.from(buf).toString('base64url');
 const sign = (data) => crypto.createHmac('sha256', 'muravey:v2:' + SECRET).update(data).digest('base64url');
 
-function issueToken(uid) {
-    const body = b64url(JSON.stringify({u: uid, x: Math.floor(Date.now() / 1000) + TOKEN_TTL}));
+function issueToken(uid, email = '') {
+    const body = b64url(JSON.stringify({u: uid, e: email || undefined, x: Math.floor(Date.now() / 1000) + TOKEN_TTL}));
     return `${body}.${sign(body)}`;
 }
 
@@ -27,8 +30,8 @@ function readToken(token) {
     const [body, sig] = String(token).split('.');
     if (!body || !sig || !safeEqual(sig, sign(body))) return null;
     try {
-        const {u, x} = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-        return typeof u === 'string' && x > Date.now() / 1000 ? u : null;
+        const {u, e, x} = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+        return typeof u === 'string' && x > Date.now() / 1000 ? {id: u, email: normEmail(e)} : null;
     } catch {
         return null;
     }
@@ -180,13 +183,13 @@ async function handle(req, headers, iam) {
         if (await readJson(iam, accountKey(email))) throw fail(409, 'user_already_exists');
         const account = {id: crypto.randomUUID(), email, pass: await hashPassword(req.password), createdAt: Date.now()};
         await writeJson(iam, accountKey(email), account);
-        return {token: issueToken(account.id)};
+        return {token: issueToken(account.id, account.email)};
     }
 
     if (req.action === 'login') {
         const account = await readJson(iam, accountKey(normEmail(req.email)));
         if (!account || !(await checkPassword(String(req.password || ''), account.pass))) throw fail(401, 'wrong_password');
-        return {token: issueToken(account.id)};
+        return {token: issueToken(account.id, account.email)};
     }
 
     // просмотр дорожной карты по публичной ссылке — без входа и без задач
@@ -234,23 +237,30 @@ async function handle(req, headers, iam) {
             account = {...account, google: sub};
             await writeJson(iam, accountKey(email), account);
         }
-        return {token: issueToken(account.id)};
+        return {token: issueToken(account.id, account.email)};
     }
 
     const auth = headers.Authorization || headers.authorization || '';
-    const uid = readToken(auth.replace(/^Bearer\s+/i, ''));
-    if (!uid) throw fail(401, 'unauthorized');
+    const identity = readToken(auth.replace(/^Bearer\s+/i, ''));
+    if (!identity) throw fail(401, 'unauthorized');
+    const uid = identity.id;
+    const deps = {readJson, writeJson, deleteKey, fail, stateKey, accountKey, normEmail, shareKey};
+    const collaborative = await collaboration.handle(req, identity, iam, deps);
+    if (collaborative) return collaborative;
 
     if (req.action === 'listBackups') return {backups: await listBackups(uid, iam)};
-    return updateState(req, uid, iam);
+    const state = await updateState(req, uid, iam, identity.email);
+    await collaboration.syncLegacyState(req, identity, iam, deps, state);
+    await collaboration.updatePublicShare(req, identity, iam, deps, state);
+    return collaboration.workspace(identity, iam, deps, state);
 }
 
-async function updateState(req, uid, iam) {
+async function updateState(req, uid, iam, email = '') {
     for (let attempt = 0; attempt < 4; attempt++) {
         const saved = await readJson(iam, stateKey(uid), true);
         let state = {tasks: [], tags: [], roadmaps: [], stakeholders: [], products: [], ...(saved.data || {})};
         const before = {...state};
-        if (req.action === 'state') return {...publicState(state), token: issueToken(uid)};
+        if (req.action === 'state') return {...publicState(state), token: issueToken(uid, email)};
         const findMap = (id) => {
             const map = state.roadmaps.find((r) => r.id === id);
             if (!map) throw fail(404, 'not_found');

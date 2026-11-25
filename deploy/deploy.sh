@@ -99,6 +99,16 @@ echo "::add-mask::$PASSWORD_B64"
 FN_ENV="BUCKET=$BUCKET,MURAVEY_PASSWORD_B64=$PASSWORD_B64"
 # пустые значения переменных Yandex не принимает
 if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then FN_ENV="$FN_ENV,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"; fi
+if [ -n "${VAPID_PRIVATE_KEY:-}" ]; then
+  FN_ENV="$FN_ENV,VAPID_PRIVATE_KEY=$VAPID_PRIVATE_KEY"
+  if [ -n "${VAPID_PUBLIC_KEY:-}" ]; then FN_ENV="$FN_ENV,VAPID_PUBLIC_KEY=$VAPID_PUBLIC_KEY"; fi
+  if [ -n "${VAPID_SUBJECT:-}" ]; then FN_ENV="$FN_ENV,VAPID_SUBJECT=$VAPID_SUBJECT"; fi
+elif [ -n "${VAPID_PUBLIC_KEY:-}" ]; then
+  echo "::error title=Не хватает VAPID_PRIVATE_KEY::Добавьте приватный ключ Web Push в секреты"
+  exit 1
+else
+  echo "::notice title=Web Push не настроен::Внутренние уведомления работают; для браузерных пушей добавьте VAPID_PRIVATE_KEY"
+fi
 retry yc serverless function version create \
   --function-name "$FN_NAME" \
   --runtime "$RUNTIME" \

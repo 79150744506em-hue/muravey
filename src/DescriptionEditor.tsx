@@ -6,6 +6,10 @@ import {
     ToolbarName as Toolbar,
 } from '@gravity-ui/markdown-editor/_/modules/toolbars/constants.js';
 import {yfm} from '@gravity-ui/markdown-editor/_/modules/toolbars/presets.js';
+import MarkdownIt from 'markdown-it';
+import ins from 'markdown-it-ins';
+
+const readonlyMarkdown = new MarkdownIt({html: false, linkify: true, breaks: true}).use(ins);
 
 // только то, что нужно в описании задачи
 const MARKS = [Action.bold, Action.italic, Action.strike, Action.underline];
@@ -28,11 +32,13 @@ export function DescriptionEditor({
     onChange,
     onSubmit,
     placeholder,
+    readOnly = false,
 }: {
     value: string;
     onChange: (markdown: string) => void;
     onSubmit?: () => void;
     placeholder?: string;
+    readOnly?: boolean;
 }) {
     const editor = useMarkdownEditor({
         preset: 'yfm',
@@ -45,9 +51,16 @@ export function DescriptionEditor({
     onChangeRef.current = onChange;
     const onSubmitRef = React.useRef(onSubmit);
     onSubmitRef.current = onSubmit;
+    const valueRef = React.useRef(value);
+    valueRef.current = value;
+    const dirty = React.useRef(false);
+    const root = React.useRef<HTMLDivElement>(null);
 
     React.useEffect(() => {
-        const change = () => onChangeRef.current(editor.getValue());
+        const change = () => {
+            dirty.current = true;
+            onChangeRef.current(editor.getValue());
+        };
         const submit = () => onSubmitRef.current?.();
         editor.on('change', change);
         editor.on('submit', submit);
@@ -57,8 +70,35 @@ export function DescriptionEditor({
         };
     }, [editor]);
 
+    React.useEffect(() => {
+        if (value === editor.getValue()) {
+            dirty.current = false;
+            return;
+        }
+        if (!dirty.current) editor.replace(value);
+    }, [editor, value]);
+
+    if (readOnly) {
+        return (
+            <div className="mv-desc mv-desc_readonly mv-desc_preview">
+                <div className="mv-md" dangerouslySetInnerHTML={{__html: readonlyMarkdown.render(value)}} />
+            </div>
+        );
+    }
+
     return (
-        <div className="mv-desc">
+        <div
+            ref={root}
+            className={`mv-desc${readOnly ? ' mv-desc_readonly' : ''}`}
+            onBlurCapture={() => {
+                if (readOnly) return;
+                onSubmitRef.current?.();
+                window.setTimeout(() => {
+                    dirty.current = false;
+                    if (valueRef.current !== editor.getValue()) editor.replace(valueRef.current);
+                });
+            }}
+        >
             <MarkdownEditorView
                 editor={editor}
                 toolbarsPreset={toolbar}

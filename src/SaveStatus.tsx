@@ -4,6 +4,32 @@ import {CircleCheck} from '@gravity-ui/icons';
 
 const fmtTime = new Intl.DateTimeFormat('ru-RU', {hour: '2-digit', minute: '2-digit'});
 
+export function useRemoteText(external: string) {
+    const [text, setText] = React.useState(external);
+    const textRef = React.useRef(text);
+    const externalRef = React.useRef(external);
+    externalRef.current = external;
+    const previousExternal = React.useRef(external);
+    const focused = React.useRef(false);
+    const update = React.useCallback((value: string) => {
+        textRef.current = value;
+        setText(value);
+    }, []);
+    React.useEffect(() => {
+        const unchanged = textRef.current === previousExternal.current;
+        previousExternal.current = external;
+        if (!focused.current || unchanged) update(external);
+    }, [external, update]);
+    const onFocus = React.useCallback(() => {
+        focused.current = true;
+    }, []);
+    const onBlur = React.useCallback(() => {
+        focused.current = false;
+        window.setTimeout(() => update(externalRef.current));
+    }, [update]);
+    return [text, update, {onFocus, onBlur}] as const;
+}
+
 export type SaveState = {kind: 'idle'} | {kind: 'pending'} | {kind: 'saved'; at: Date} | {kind: 'failed'};
 
 /** Состояние последней записи в шапке карточки; пока ничего не меняли — подпись idle. */
