@@ -11,8 +11,9 @@ import {
     useSensor,
     useSensors,
 } from '@dnd-kit/core';
-import type {DragEndEvent} from '@dnd-kit/core';
-import {sortableKeyboardCoordinates} from '@dnd-kit/sortable';
+import type {CollisionDetection, DragEndEvent} from '@dnd-kit/core';
+import {SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy} from '@dnd-kit/sortable';
+import {CSS} from '@dnd-kit/utilities';
 import {
     ActionTooltip,
     Button,
@@ -113,6 +114,16 @@ const barColor = (m: Pick<Milestone, 'color'>): React.CSSProperties =>
         : {};
 
 type GanttMap = Pick<Roadmap, 'scale' | 'from' | 'to' | 'milestones' | 'epics' | 'deadlines'>;
+
+const EPIC_SORT_PREFIX = 'epic-sort:';
+const epicSortId = (id: string) => `${EPIC_SORT_PREFIX}${id}`;
+const ganttCollisionDetection: CollisionDetection = (args) => {
+    const prefix = String(args.active.id).startsWith(EPIC_SORT_PREFIX) ? EPIC_SORT_PREFIX : 'epic:';
+    return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter(({id}) => String(id).startsWith(prefix)),
+    });
+};
 
 /* ---------- блокировки: веха начинается не раньше, чем закончатся её блокеры ---------- */
 
@@ -228,6 +239,43 @@ function MilestoneLabel({
     );
 }
 
+function SortableEpicGroup({
+    epic,
+    disabled,
+    children,
+}: {
+    epic: Epic;
+    disabled: boolean;
+    children: (dragHandle: React.ReactNode) => React.ReactNode;
+}) {
+    const sortable = useSortable({id: epicSortId(epic.id), disabled});
+    const handle = disabled ? null : (
+        <ActionTooltip title="Перетащить эпик">
+            <button
+                ref={sortable.setActivatorNodeRef}
+                type="button"
+                className="mv-gantt__drag-handle"
+                {...sortable.attributes}
+                {...sortable.listeners}
+                aria-label={`Перетащить эпик «${epic.title}»`}
+                aria-roledescription="перетаскиваемый эпик"
+                data-epic-drag={epic.id}
+            >
+                <Icon data={Grip} size={15} />
+            </button>
+        </ActionTooltip>
+    );
+    return (
+        <div
+            ref={sortable.setNodeRef}
+            className={`mv-gantt__epic-group${sortable.isDragging ? ' mv-gantt__epic-group_dragging' : ''}`}
+            style={{transform: CSS.Translate.toString(sortable.transform), transition: sortable.transition}}
+        >
+            {children(handle)}
+        </div>
+    );
+}
+
 function EpicDropRow({
     epicId,
     disabled,
@@ -254,6 +302,7 @@ export function Gantt({
     readOnly = false,
     onChange,
     onMoveToEpic,
+    onReorderEpics,
     onOpen,
     onRename,
     onDuplicate,
@@ -270,6 +319,7 @@ export function Gantt({
     onAdd?: () => void;
     onChange?: (m: Milestone) => void;
     onMoveToEpic?: (id: string, epicId: string | null) => void;
+    onReorderEpics?: (from: number, to: number) => void;
     onOpen?: (id: string) => void;
     onRename?: (id: string, title: string) => void;
     onDuplicate?: (m: Milestone) => void;
@@ -405,6 +455,7 @@ export function Gantt({
     const deadlines = [...(roadmap.deadlines ?? [])].sort((a, b) => a.date.localeCompare(b.date));
     const ungrouped = items.filter((m) => !epics.some((e) => e.id === m.epicId));
     const canDrag = !readOnly && Boolean(onMoveToEpic) && epics.length > 0;
+    const canSortEpics = !readOnly && Boolean(onReorderEpics) && epics.length > 1;
     const activeMilestone = items.find((m) => m.id === activeId);
     const contextMilestone = items.find((m) => m.id === contextMenu?.id);
     const groupKeys = [...epics.map((e) => e.id), ''];
@@ -420,9 +471,15 @@ export function Gantt({
     const finishMove = ({active, over}: DragEndEvent) => {
         setActiveId(null);
         if (!over) return;
-        const dropId = String(over.id);
-        if (!dropId.startsWith('epic:')) return;
         const id = String(active.id);
+        const dropId = String(over.id);
+        if (id.startsWith(EPIC_SORT_PREFIX)) {
+            const from = epics.findIndex((epic) => epicSortId(epic.id) === id);
+            const to = epics.findIndex((epic) => epicSortId(epic.id) === dropId);
+            if (from >= 0 && to >= 0 && from !== to) onReorderEpics?.(from, to);
+            return;
+        }
+        if (!dropId.startsWith('epic:')) return;
         const milestone = roadmap.milestones.find((m) => m.id === id);
         const epicId = dropId.slice(5) || null;
         if (milestone && (milestone.epicId ?? null) !== epicId) onMoveToEpic?.(id, epicId);
@@ -577,7 +634,7 @@ export function Gantt({
         );
     };
 
-    const renderEpic = (epic?: Epic) => {
+    const renderEpic = (epic?: Epic, dragHandle?: React.ReactNode) => {
         const group = epic ? items.filter((m) => m.epicId === epic.id) : ungrouped;
         const id = epic?.id ?? '';
         const isCollapsed = collapsed.has(id);
@@ -609,6 +666,7 @@ export function Gantt({
                         </span>
                         <span className="mv-gantt__meta">{milestonesWord(group.length)}</span>
                     </button>
+                    {dragHandle}
                 </div>
                 <div className="mv-gantt__track" style={{width}}>
                     {isCollapsed &&
@@ -632,14 +690,14 @@ export function Gantt({
     return (
         <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={ganttCollisionDetection}
             onDragStart={({active}) => setActiveId(String(active.id))}
             onDragEnd={finishMove}
             onDragCancel={() => setActiveId(null)}
             accessibility={{
                 screenReaderInstructions: {
                     draggable:
-                        'Пробел, чтобы взять веху, стрелки, чтобы выбрать эпик, пробел, чтобы отпустить. Escape отменяет перенос.',
+                        'Пробел, чтобы взять веху или эпик, стрелки, чтобы выбрать новое место, пробел, чтобы отпустить. Escape отменяет перенос.',
                 },
             }}
         >
@@ -770,13 +828,23 @@ export function Gantt({
 
                     {epics.length > 0 ? (
                         <>
-                            {epics.map((epic) => (
-                                <React.Fragment key={epic.id}>
-                                    {renderEpic(epic)}
-                                    {!collapsed.has(epic.id) &&
-                                        items.filter((m) => m.epicId === epic.id).map(renderMilestone)}
-                                </React.Fragment>
-                            ))}
+                            <SortableContext
+                                items={epics.map((epic) => epicSortId(epic.id))}
+                                strategy={verticalListSortingStrategy}
+                                disabled={!canSortEpics}
+                            >
+                                {epics.map((epic) => (
+                                    <SortableEpicGroup key={epic.id} epic={epic} disabled={!canSortEpics}>
+                                        {(dragHandle) => (
+                                            <>
+                                                {renderEpic(epic, dragHandle)}
+                                                {!collapsed.has(epic.id) &&
+                                                    items.filter((m) => m.epicId === epic.id).map(renderMilestone)}
+                                            </>
+                                        )}
+                                    </SortableEpicGroup>
+                                ))}
+                            </SortableContext>
                             {renderEpic()}
                             {!collapsed.has('') && ungrouped.map(renderMilestone)}
                         </>
@@ -1206,6 +1274,16 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
             }),
         );
     };
+    const moveEpic = (from: number, to: number) => {
+        const current = mapRef.current.epics ?? [];
+        if (from < 0 || to < 0 || from >= current.length || to >= current.length || from === to) return;
+        const epics = [...current];
+        const [item] = epics.splice(from, 1);
+        if (!item) return;
+        epics.splice(to, 0, item);
+        auto.save({epics});
+        p.undoable(`Эпик «${item.title}» перемещён`, () => auto.save({epics: current}));
+    };
     const removeMilestone = (m: Milestone) => {
         p.onOpenMilestone(null);
         p.onSave({...map, milestones: map.milestones.filter((x) => x.id !== m.id)});
@@ -1304,7 +1382,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
             </div>
             <Text variant="caption-2" color="secondary" className="mv-map__hint">
                 Тяните полосу или её край, чтобы изменить сроки. За значок <span aria-hidden="true">⋮⋮</span> веху можно
-                перенести в другой эпик.
+                перенести в другой эпик, а эпик — перетащить выше или ниже.
             </Text>
 
             <Gantt
@@ -1313,6 +1391,7 @@ function RoadmapPage({map, ...p}: RoadmapsProps & {map: Roadmap}) {
                     auto.save({milestones: mapRef.current.milestones.map((x) => (x.id === m.id ? m : x))})
                 }
                 onMoveToEpic={p.disabled ? undefined : moveMilestone}
+                onReorderEpics={p.disabled ? undefined : moveEpic}
                 onOpen={(id) => p.onOpenMilestone(id)}
                 onRename={p.disabled ? undefined : (id, value) => patchMilestone(id, {title: value})}
                 onDuplicate={p.disabled ? undefined : duplicateMilestone}

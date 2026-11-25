@@ -636,7 +636,7 @@ export function App() {
     if (login) return <LoginScreen opts={login.opts} onReady={login.connect} />;
 
     return (
-        <div className="mv-app mv-app_shell">
+        <div className={`mv-app mv-app_shell${view === 'roadmap' && mapId ? ' mv-app_shell_roadmap' : ''}`}>
             {feast > 0 && <MonkeyFeast key={feast} onEnd={() => setFeast(0)} />}
             <aside className="mv-sidebar">
                 <div className="mv-brand">
@@ -662,7 +662,7 @@ export function App() {
                 </nav>
             </aside>
 
-            <div className="mv-workspace">
+            <div className={`mv-workspace${view === 'roadmap' && mapId ? ' mv-workspace_roadmap' : ''}`}>
             <header className="mv-header">
                 <div className="mv-brand mv-header__brand">
                     <img src={logo} alt="" className="mv-mark" />

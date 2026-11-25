@@ -70,6 +70,9 @@ body {
     align-items: start;
     gap: 32px;
 }
+.mv-app_shell_roadmap {
+    max-width: none;
+}
 .mv-sidebar {
     position: sticky;
     top: 0;
@@ -146,6 +149,9 @@ body {
     flex-direction: column;
     gap: var(--g-spacing-4);
     padding-block: var(--g-spacing-6) var(--g-spacing-10);
+}
+.mv-workspace_roadmap {
+    max-width: none;
 }
 .mv-header .mv-header__brand {
     display: none;
@@ -945,7 +951,7 @@ body {
 
 /* ---------- планирование перетаскиванием ---------- */
 .mv-app_wide {
-    max-width: 1080px;
+    max-width: none;
 }
 .mv-board {
     display: grid;
@@ -2377,6 +2383,12 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
     border-left: 2px dashed #d04b40;
     opacity: 0.75;
 }
+.mv-gantt__epic-group {
+    position: relative;
+}
+.mv-gantt__epic-group_dragging {
+    z-index: 3;
+}
 .mv-gantt__row_epic,
 .mv-gantt__row_epic:hover {
     min-height: 42px;
@@ -2629,7 +2641,7 @@ button.mv-gantt__label:not(:disabled):hover .mv-gantt__name {
 }
 @media (max-width: 640px) {
     .mv-gantt {
-        --mv-gantt-label: 140px;
+        --mv-gantt-label: clamp(160px, 45vw, 180px);
     }
     .mv-gantt__label {
         padding-inline: 10px;
